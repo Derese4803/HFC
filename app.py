@@ -166,7 +166,6 @@ def fetch_file_from_github(filename: str) -> Optional[pd.DataFrame]:
         st.error(f"⏱️ Timeout loading {filename}. Please check your connection.")
         return None
     except Exception as e:
-        st.error(f"Error loading {filename}: {str(e)}")
         return None
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -231,7 +230,6 @@ def check_token_validity() -> bool:
         headers = get_github_headers()
         response = requests.get("https://api.github.com/user", headers=headers, timeout=5)
         if response.status_code == 401:
-            st.error("🔐 Access token expired. Please contact administrator.")
             return False
         return True
     except:
@@ -260,15 +258,6 @@ def get_unique_id_column(df: pd.DataFrame) -> Optional[str]:
             return col
     
     return None
-
-def safe_get_unique_ids(df: pd.DataFrame) -> set:
-    """Safely get unique IDs from dataframe"""
-    if df is None or len(df) == 0:
-        return set()
-    id_col = get_unique_id_column(df)
-    if id_col is None:
-        return set()
-    return set(df[id_col].unique())
 
 # ============================================================================
 # DATA PROCESSING FUNCTIONS
@@ -364,13 +353,6 @@ def get_enumerator_statistics(constraints_df: pd.DataFrame, logic_df: pd.DataFra
 # UI RENDERING & COMPONENT INJECTION
 # ============================================================================
 
-def render_progress_bar(current: int, total: int):
-    percentage = (current / total * 100) if total > 0 else 0
-    st.markdown(f"""
-        <div class="progress-bar"><div class="progress-fill" style="width: {percentage}%"></div></div>
-        <p style="text-align: center; color: #666;">{current} of {total} completed ({percentage:.0f}%)</p>
-    """, unsafe_allow_html=True)
-
 def render_farmer_header(farmer_name: str, phone_no: str, error_count: int, completed_count: int = 0):
     badge = f'<span class="success-badge">{completed_count} ready</span> <span class="error-badge">{error_count-completed_count} pending</span>' if completed_count > 0 else f'<span class="error-badge">{error_count} issues</span>'
     st.markdown(f"""
@@ -438,16 +420,34 @@ def render_logic_error(discrepancy: pd.Series, error_key: str, id_col: str):
 def main():
     st.title("🌾 HFC Structural Field-Data Correction System")
     
-    # Verify cloud secrets/tokens are working before launching dashboard
-    if not check_token_validity():
-        return
+    constraints_df = None
+    logic_df = None
+    mode = "Cloud (GitHub)"
 
-    # Sourcing data tables from repository
-    constraints_df, logic_df = load_data_from_github()
+    # Check if GitHub configuration is active and working
+    if check_token_validity():
+        constraints_df, logic_df = load_data_from_github()
     
-    if constraints_df is None and logic_df is None:
-        st.error("Failed to source telemetry data sets from GitHub branch.")
-        return
+    # FALLBACK INPUT BUTTON: Triggered if GitHub variables are missing/failed
+    if constraints_df is None or logic_df is None:
+        mode = "Manual Local Upload"
+        st.warning("⚠️ GitHub link offline or unconfigured. Switching to Local Upload mode.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            c_file = st.file_uploader("Upload constraints.csv File", type=["csv"])
+            if c_file:
+                constraints_df = pd.read_csv(c_file)
+        with col2:
+            l_file = st.file_uploader("Upload logic.csv File", type=["csv"])
+            if l_file:
+                logic_df = pd.read_csv(l_file)
+                
+        if constraints_df is None and logic_df is None:
+            st.info("💡 Drop your field data CSV logs above to begin auditing forms.")
+            return
+
+    st.sidebar.markdown(f"**Active Mode:** `{mode}`")
 
     # Admin Control Center Router
     st.sidebar.title("🔐 Authorization Check")
@@ -478,11 +478,17 @@ def main():
         return
 
     # Form Processor Layout for Field Agents
-    all_users = sorted(list(set(
-        (list(constraints_df['username'].unique()) if constraints_df is not None else []) +
-        (list(logic_df['username'].unique()) if logic_df is not None else [])
-    )))
+    all_users = []
+    if constraints_df is not None and 'username' in constraints_df.columns:
+        all_users.extend(constraints_df['username'].dropna().unique())
+    if logic_df is not None and 'username' in logic_df.columns:
+        all_users.extend(logic_df['username'].dropna().unique())
+    all_users = sorted(list(set(all_users)))
     
+    if not all_users:
+        st.error("Could not parse 'username' column out of the uploaded datasets.")
+        return
+
     selected_enum = st.selectbox("Select Your Enumerator Identifier Code:", ["-- Select ID --"] + all_users)
     if selected_enum == "-- Select ID --":
         st.info("Please select your assigned username identifier from the selector menu to pull up your pending dashboard.")
@@ -492,8 +498,8 @@ def main():
     c_user = constraints_df[constraints_df['username'] == selected_enum] if constraints_df is not None else pd.DataFrame()
     l_user = logic_df[logic_df['username'] == selected_enum] if logic_df is not None else pd.DataFrame()
     
-    c_pending = filter_uncorrected_errors(c_user, "constraint", selected_enum)
-    l_pending = filter_uncorrected_errors(l_user, "logic", selected_enum)
+    c_pending = filter_uncorrected_errors(c_user, "constraint", selected_enum) if not c_user.empty else pd.DataFrame()
+    l_pending = filter_uncorrected_errors(l_user, "logic", selected_enum) if not l_user.empty else pd.DataFrame()
 
     if c_pending.empty and l_pending.empty:
         st.success("🎉 All clear! No pending corrections located for this profile.")
@@ -503,49 +509,62 @@ def main():
     st.subheader("📋 Pending Data Verification Backlog")
     
     # Process Range Constraint Errors
-    for idx, row in c_pending.iterrows():
-        key = f"constraint_{row[id_col]}_{row['variable']}"
-        with st.expander(f"❌ Range Constraint Error: ID {row[id_col]} ({row['variable']})"):
-            render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
-            render_constraint_error(row, key, id_col)
-            
-            if st.button("Commit Correction", key=f"btn_{key}"):
-                data = st.session_state.all_corrections_data.get(key)
-                if data and data['explanation'].strip():
-                    new_row_df = pd.DataFrame([{
-                        'error_type': 'constraint', 'unique_id': str(row[id_col]), 'variable': row['variable'],
-                        'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
-                        'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    }])
-                    if save_corrections_to_github(new_row_df):
-                        st.session_state.corrected_errors.add(key)
-                        st.success("Correction pushed to GitHub!")
-                        st.rerun()
-                else: 
-                    st.error("Justification explanation comment is required.")
+    if not c_pending.empty and id_col in c_pending.columns:
+        for idx, row in c_pending.iterrows():
+            key = f"constraint_{row[id_col]}_{row['variable']}"
+            with st.expander(f"❌ Range Constraint Error: ID {row[id_col]} ({row['variable']})"):
+                render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
+                render_constraint_error(row, key, id_col)
+                
+                if st.button("Commit Correction", key=f"btn_{key}"):
+                    data = st.session_state.all_corrections_data.get(key)
+                    if data and data['explanation'].strip():
+                        new_row_df = pd.DataFrame([{
+                            'error_type': 'constraint', 'unique_id': str(row[id_col]), 'variable': row['variable'],
+                            'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
+                            'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }])
+                        
+                        if mode == "Cloud (GitHub)":
+                            if save_corrections_to_github(new_row_df):
+                                st.session_state.corrected_errors.add(key)
+                                st.success("Correction pushed to GitHub!")
+                                st.rerun()
+                        else:
+                            st.session_state.corrected_errors.add(key)
+                            st.success("Correction logged locally! (Download final dataframe from admin profile panel)")
+                            st.rerun()
+                    else: 
+                        st.error("Justification explanation comment is required.")
 
     # Process System Reconciliation Logic Mismatches
-    for idx, row in l_pending.iterrows():
-        key = f"logic_{row[id_col]}_{row['variable']}"
-        with st.expander(f"⚠️ System Mismatch Discrepancy: ID {row[id_col]} ({row['variable']})"):
-            render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
-            render_logic_error(row, key, id_col)
-            
-            if st.button("Commit Correction", key=f"btn_{key}"):
-                data = st.session_state.all_corrections_data.get(key)
-                if data and data['explanation'].strip():
-                    new_row_df = pd.DataFrame([{
-                        'error_type': 'logic', 'unique_id': str(row[id_col]), 'variable': row['variable'],
-                        'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
-                        'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    }])
-                    if save_corrections_to_github(new_row_df):
-                        st.session_state.corrected_errors.add(key)
-                        st.success("Correction pushed to GitHub!")
-                        st.rerun()
-                else: 
-                    st.error("Justification explanation comment is required.")
+    if not l_pending.empty and id_col in l_pending.columns:
+        for idx, row in l_pending.iterrows():
+            key = f"logic_{row[id_col]}_{row['variable']}"
+            with st.expander(f"⚠️ System Mismatch Discrepancy: ID {row[id_col]} ({row['variable']})"):
+                render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
+                render_logic_error(row, key, id_col)
+                
+                if st.button("Commit Correction", key=f"btn_{key}"):
+                    data = st.session_state.all_corrections_data.get(key)
+                    if data and data['explanation'].strip():
+                        new_row_df = pd.DataFrame([{
+                            'error_type': 'logic', 'unique_id': str(row[id_col]), 'variable': row['variable'],
+                            'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
+                            'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }])
+                        
+                        if mode == "Cloud (GitHub)":
+                            if save_corrections_to_github(new_row_df):
+                                st.session_state.corrected_errors.add(key)
+                                st.success("Correction pushed to GitHub!")
+                                st.rerun()
+                        else:
+                            st.session_state.corrected_errors.add(key)
+                            st.success("Correction logged locally!")
+                            st.rerun()
+                    else: 
+                        st.error("Justification explanation comment is required.")
 
 if __name__ == "__main__":
     main()
-    
