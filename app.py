@@ -393,4 +393,158 @@ def render_constraint_error(error: pd.Series, error_key: str, id_col: str):
         
     col1, col2 = st.columns([3, 2])
     with col1:
-        st.info(f"**Current Value:** {
+        st.info(f"**Current Value:** {error['value']}")
+        st.caption(f"**Rule:** {error['constraint']}")
+    with col2:
+        correct_value = st.number_input("Corrected Value", value=default_value, step=1, key=f"value_{error_key}")
+        
+    if correct_value < min_val or correct_value > max_val:
+        st.warning(f"⚠️ Value outside expected range ({min_val}-{max_val}).")
+        
+    explanation = st.text_area("📝 Explanation (Required)", key=f"explain_{error_key}", height=100, 
+                               placeholder="Why is this change necessary? What did the farmer clarify?")
+    
+    st.session_state.all_corrections_data[error_key] = {
+        'error_type': 'constraint', 'error_data': error, 'correct_value': correct_value,
+        'explanation': explanation, 'outside_range': correct_value < min_val or correct_value > max_val, 'id_column': id_col
+    }
+
+def render_logic_error(discrepancy: pd.Series, error_key: str, id_col: str):
+    st.markdown(f"### 📊 {discrepancy['variable']}")
+    try:
+        farmer_value = int(discrepancy['value'])
+        troster_value = int(discrepancy['Troster Value'])
+    except:
+        farmer_value, troster_value = 0, 0
+        
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Your Report", farmer_value)
+    col2.metric("System Record", troster_value)
+    col3.metric("Difference", farmer_value - troster_value)
+    
+    correct_value = st.number_input("Corrected Value", value=farmer_value, step=1, key=f"value_{error_key}")
+    explanation = st.text_area("📝 Explanation (Required)", key=f"explain_{error_key}", height=100, 
+                               placeholder="Why is there a conflict between your records and the system record?")
+    
+    st.session_state.all_corrections_data[error_key] = {
+        'error_type': 'logic', 'error_data': discrepancy, 'correct_value': correct_value,
+        'explanation': explanation, 'id_column': id_col
+    }
+
+# ============================================================================
+# MAIN APPLICATION ROUTER
+# ============================================================================
+
+def main():
+    st.title("🌾 HFC Structural Field-Data Correction System")
+    
+    # Verify cloud secrets/tokens are working before launching dashboard
+    if not check_token_validity():
+        return
+
+    # Sourcing data tables from repository
+    constraints_df, logic_df = load_data_from_github()
+    
+    if constraints_df is None and logic_df is None:
+        st.error("Failed to source telemetry data sets from GitHub branch.")
+        return
+
+    # Admin Control Center Router
+    st.sidebar.title("🔐 Authorization Check")
+    if not st.session_state.is_admin:
+        with st.sidebar.expander("Admin Login Dashboard"):
+            user = st.text_input("Username")
+            pas = st.text_input("Password", type="password")
+            if st.button("Log In"):
+                if user == ADMIN_USERNAME and pas == ADMIN_PASSWORD:
+                    st.session_state.is_admin = True
+                    st.rerun()
+                else: 
+                    st.error("Invalid credentials.")
+    else:
+        st.sidebar.success("Logged in as System Administrator")
+        if st.sidebar.button("Log Out"):
+            st.session_state.is_admin = False
+            st.rerun()
+
+    # Route screen output to admin view panel if logged in
+    if st.session_state.is_admin:
+        st.subheader("📊 Executive System Metrics")
+        stats_df = get_enumerator_statistics(constraints_df, logic_df)
+        if not stats_df.empty:
+            st.dataframe(stats_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No logs are currently pending submission across your active system networks.")
+        return
+
+    # Form Processor Layout for Field Agents
+    all_users = sorted(list(set(
+        (list(constraints_df['username'].unique()) if constraints_df is not None else []) +
+        (list(logic_df['username'].unique()) if logic_df is not None else [])
+    )))
+    
+    selected_enum = st.selectbox("Select Your Enumerator Identifier Code:", ["-- Select ID --"] + all_users)
+    if selected_enum == "-- Select ID --":
+        st.info("Please select your assigned username identifier from the selector menu to pull up your pending dashboard.")
+        return
+
+    # Parse remaining tasks assigned specifically to this individual user
+    c_user = constraints_df[constraints_df['username'] == selected_enum] if constraints_df is not None else pd.DataFrame()
+    l_user = logic_df[logic_df['username'] == selected_enum] if logic_df is not None else pd.DataFrame()
+    
+    c_pending = filter_uncorrected_errors(c_user, "constraint", selected_enum)
+    l_pending = filter_uncorrected_errors(l_user, "logic", selected_enum)
+
+    if c_pending.empty and l_pending.empty:
+        st.success("🎉 All clear! No pending corrections located for this profile.")
+        return
+
+    id_col = get_unique_id_column(constraints_df) or get_unique_id_column(logic_df) or 'unique_id'
+    st.subheader("📋 Pending Data Verification Backlog")
+    
+    # Process Range Constraint Errors
+    for idx, row in c_pending.iterrows():
+        key = f"constraint_{row[id_col]}_{row['variable']}"
+        with st.expander(f"❌ Range Constraint Error: ID {row[id_col]} ({row['variable']})"):
+            render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
+            render_constraint_error(row, key, id_col)
+            
+            if st.button("Commit Correction", key=f"btn_{key}"):
+                data = st.session_state.all_corrections_data.get(key)
+                if data and data['explanation'].strip():
+                    new_row_df = pd.DataFrame([{
+                        'error_type': 'constraint', 'unique_id': str(row[id_col]), 'variable': row['variable'],
+                        'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
+                        'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    }])
+                    if save_corrections_to_github(new_row_df):
+                        st.session_state.corrected_errors.add(key)
+                        st.success("Correction pushed to GitHub!")
+                        st.rerun()
+                else: 
+                    st.error("Justification explanation comment is required.")
+
+    # Process System Reconciliation Logic Mismatches
+    for idx, row in l_pending.iterrows():
+        key = f"logic_{row[id_col]}_{row['variable']}"
+        with st.expander(f"⚠️ System Mismatch Discrepancy: ID {row[id_col]} ({row['variable']})"):
+            render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
+            render_logic_error(row, key, id_col)
+            
+            if st.button("Commit Correction", key=f"btn_{key}"):
+                data = st.session_state.all_corrections_data.get(key)
+                if data and data['explanation'].strip():
+                    new_row_df = pd.DataFrame([{
+                        'error_type': 'logic', 'unique_id': str(row[id_col]), 'variable': row['variable'],
+                        'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
+                        'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    }])
+                    if save_corrections_to_github(new_row_df):
+                        st.session_state.corrected_errors.add(key)
+                        st.success("Correction pushed to GitHub!")
+                        st.rerun()
+                else: 
+                    st.error("Justification explanation comment is required.")
+
+if __name__ == "__main__":
+    main()
