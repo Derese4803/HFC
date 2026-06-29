@@ -14,9 +14,9 @@ from typing import Tuple, Optional, List, Dict
 st.set_page_config(
     page_title="HFC Data Correction",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",  # Open sidebar by default to show login/upload
     menu_items={
-        'About': "HFC Data Correction System v2.0"
+        'About': "HFC Data Correction System v2.5"
     }
 )
 
@@ -124,7 +124,11 @@ def initialize_session_state():
         'is_admin': False,
         'selected_enumerator': None,
         'show_completed': False,
-        'filter_error_type': 'All'
+        'filter_error_type': 'All',
+        'local_corrections': pd.DataFrame(columns=[
+            'error_type', 'unique_id', 'variable', 'correct_value', 
+            'explanation', 'corrected_by', 'timestamp'
+        ])
     }
     
     for key, value in defaults.items():
@@ -176,19 +180,22 @@ def load_data_from_github() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFra
     return constraints_df, logic_df
 
 def load_existing_corrections() -> Optional[pd.DataFrame]:
-    """Load existing corrections from GitHub"""
-    try:
-        headers = get_github_headers()
-        corrections_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/corrections.csv"
-        response = requests.get(corrections_url, headers=headers)
-        
-        if response.status_code == 200:
-            corrections_content = base64.b64decode(response.json()['content']).decode('utf-8')
-            return pd.read_csv(io.StringIO(corrections_content))
-        else:
-            return None
-    except:
-        return None
+    """Load existing corrections from GitHub (Cloud mode) or Local State (Manual mode)"""
+    if check_token_validity():
+        try:
+            headers = get_github_headers()
+            corrections_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/corrections.csv"
+            response = requests.get(corrections_url, headers=headers)
+            
+            if response.status_code == 200:
+                corrections_content = base64.b64decode(response.json()['content']).decode('utf-8')
+                return pd.read_csv(io.StringIO(corrections_content))
+            else:
+                return st.session_state.local_corrections
+        except:
+            return st.session_state.local_corrections
+    else:
+        return st.session_state.local_corrections
 
 def save_corrections_to_github(corrections_df: pd.DataFrame) -> bool:
     """Save or append corrections to GitHub"""
@@ -323,16 +330,16 @@ def get_enumerator_statistics(constraints_df: pd.DataFrame, logic_df: pd.DataFra
     """Get detailed statistics for each enumerator"""
     stats = []
     all_enumerators = set()
-    if constraints_df is not None and len(constraints_df) > 0:
+    if constraints_df is not None and len(constraints_df) > 0 and 'username' in constraints_df.columns:
         all_enumerators.update(constraints_df['username'].unique())
-    if logic_df is not None and len(logic_df) > 0:
+    if logic_df is not None and len(logic_df) > 0 and 'username' in logic_df.columns:
         all_enumerators.update(logic_df['username'].unique())
     
     existing_corrections = load_existing_corrections()
     
     for enumerator in sorted(all_enumerators):
-        constraint_errors = len(constraints_df[constraints_df['username'] == enumerator]) if constraints_df is not None else 0
-        logic_errors = len(logic_df[logic_df['username'] == enumerator]) if logic_df is not None else 0
+        constraint_errors = len(constraints_df[constraints_df['username'] == enumerator]) if (constraints_df is not None and 'username' in constraints_df.columns) else 0
+        logic_errors = len(logic_df[logic_df['username'] == enumerator]) if (logic_df is not None and 'username' in logic_df.columns) else 0
         total_errors = constraint_errors + logic_errors
         
         solved = len(existing_corrections[existing_corrections['corrected_by'] == enumerator]) if existing_corrections is not None else 0
@@ -350,7 +357,7 @@ def get_enumerator_statistics(constraints_df: pd.DataFrame, logic_df: pd.DataFra
     return pd.DataFrame(stats).sort_values('Remaining', ascending=False) if stats else pd.DataFrame()
 
 # ============================================================================
-# UI RENDERING & COMPONENT INJECTION
+# UI RENDERING COMPONENTS
 # ============================================================================
 
 def render_farmer_header(farmer_name: str, phone_no: str, error_count: int, completed_count: int = 0):
@@ -428,26 +435,27 @@ def main():
     if check_token_validity():
         constraints_df, logic_df = load_data_from_github()
     
-    # FALLBACK INPUT BUTTON: Triggered if GitHub variables are missing/failed
+    # 📥 INPUT BUTTONS (FALLBACK): Triggered if GitHub credentials are missing
     if constraints_df is None or logic_df is None:
         mode = "Manual Local Upload"
-        st.warning("⚠️ GitHub link offline or unconfigured. Switching to Local Upload mode.")
+        st.sidebar.warning("⚠️ Using Local Upload Mode.")
         
+        st.markdown("### 📥 Step 1: Upload Baseline System Datasets")
         col1, col2 = st.columns(2)
         with col1:
-            c_file = st.file_uploader("Upload constraints.csv File", type=["csv"])
+            c_file = st.file_uploader("Upload constraints.csv File", type=["csv"], key="local_c_upload")
             if c_file:
                 constraints_df = pd.read_csv(c_file)
         with col2:
-            l_file = st.file_uploader("Upload logic.csv File", type=["csv"])
+            l_file = st.file_uploader("Upload logic.csv File", type=["csv"], key="local_l_upload")
             if l_file:
                 logic_df = pd.read_csv(l_file)
                 
         if constraints_df is None and logic_df is None:
-            st.info("💡 Drop your field data CSV logs above to begin auditing forms.")
+            st.info("💡 Drop your field dataset `.csv` log files into the uploaders above to populate your tracking dashboards.")
             return
 
-    st.sidebar.markdown(f"**Active Mode:** `{mode}`")
+    st.sidebar.markdown(f"**Active Data Mode:** `{mode}`")
 
     # Admin Control Center Router
     st.sidebar.title("🔐 Authorization Check")
@@ -467,104 +475,31 @@ def main():
             st.session_state.is_admin = False
             st.rerun()
 
-    # Route screen output to admin view panel if logged in
+    # ============================================================================
+    # ROUTE SCREEN: ADMIN DASHBOARD (WITH EXCEL DOWNLOAD BUTTON)
+    # ============================================================================
     if st.session_state.is_admin:
         st.subheader("📊 Executive System Metrics")
         stats_df = get_enumerator_statistics(constraints_df, logic_df)
+        
         if not stats_df.empty:
             st.dataframe(stats_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No logs are currently pending submission across your active system networks.")
-        return
-
-    # Form Processor Layout for Field Agents
-    all_users = []
-    if constraints_df is not None and 'username' in constraints_df.columns:
-        all_users.extend(constraints_df['username'].dropna().unique())
-    if logic_df is not None and 'username' in logic_df.columns:
-        all_users.extend(logic_df['username'].dropna().unique())
-    all_users = sorted(list(set(all_users)))
-    
-    if not all_users:
-        st.error("Could not parse 'username' column out of the uploaded datasets.")
-        return
-
-    selected_enum = st.selectbox("Select Your Enumerator Identifier Code:", ["-- Select ID --"] + all_users)
-    if selected_enum == "-- Select ID --":
-        st.info("Please select your assigned username identifier from the selector menu to pull up your pending dashboard.")
-        return
-
-    # Parse remaining tasks assigned specifically to this individual user
-    c_user = constraints_df[constraints_df['username'] == selected_enum] if constraints_df is not None else pd.DataFrame()
-    l_user = logic_df[logic_df['username'] == selected_enum] if logic_df is not None else pd.DataFrame()
-    
-    c_pending = filter_uncorrected_errors(c_user, "constraint", selected_enum) if not c_user.empty else pd.DataFrame()
-    l_pending = filter_uncorrected_errors(l_user, "logic", selected_enum) if not l_user.empty else pd.DataFrame()
-
-    if c_pending.empty and l_pending.empty:
-        st.success("🎉 All clear! No pending corrections located for this profile.")
-        return
-
-    id_col = get_unique_id_column(constraints_df) or get_unique_id_column(logic_df) or 'unique_id'
-    st.subheader("📋 Pending Data Verification Backlog")
-    
-    # Process Range Constraint Errors
-    if not c_pending.empty and id_col in c_pending.columns:
-        for idx, row in c_pending.iterrows():
-            key = f"constraint_{row[id_col]}_{row['variable']}"
-            with st.expander(f"❌ Range Constraint Error: ID {row[id_col]} ({row['variable']})"):
-                render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
-                render_constraint_error(row, key, id_col)
+            
+            st.markdown("---")
+            st.subheader("📥 Export System Diagnostics")
+            
+            # Master corrections list merger
+            export_df = load_existing_corrections()
+            
+            if export_df is not None and not export_df.empty:
+                # Convert active logging history tracking table into downloadable buffer string
+                csv_buffer = io.StringIO()
+                export_df.to_csv(csv_buffer, index=False)
+                csv_data = csv_buffer.getvalue()
                 
-                if st.button("Commit Correction", key=f"btn_{key}"):
-                    data = st.session_state.all_corrections_data.get(key)
-                    if data and data['explanation'].strip():
-                        new_row_df = pd.DataFrame([{
-                            'error_type': 'constraint', 'unique_id': str(row[id_col]), 'variable': row['variable'],
-                            'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
-                            'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        }])
-                        
-                        if mode == "Cloud (GitHub)":
-                            if save_corrections_to_github(new_row_df):
-                                st.session_state.corrected_errors.add(key)
-                                st.success("Correction pushed to GitHub!")
-                                st.rerun()
-                        else:
-                            st.session_state.corrected_errors.add(key)
-                            st.success("Correction logged locally! (Download final dataframe from admin profile panel)")
-                            st.rerun()
-                    else: 
-                        st.error("Justification explanation comment is required.")
-
-    # Process System Reconciliation Logic Mismatches
-    if not l_pending.empty and id_col in l_pending.columns:
-        for idx, row in l_pending.iterrows():
-            key = f"logic_{row[id_col]}_{row['variable']}"
-            with st.expander(f"⚠️ System Mismatch Discrepancy: ID {row[id_col]} ({row['variable']})"):
-                render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
-                render_logic_error(row, key, id_col)
-                
-                if st.button("Commit Correction", key=f"btn_{key}"):
-                    data = st.session_state.all_corrections_data.get(key)
-                    if data and data['explanation'].strip():
-                        new_row_df = pd.DataFrame([{
-                            'error_type': 'logic', 'unique_id': str(row[id_col]), 'variable': row['variable'],
-                            'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
-                            'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        }])
-                        
-                        if mode == "Cloud (GitHub)":
-                            if save_corrections_to_github(new_row_df):
-                                st.session_state.corrected_errors.add(key)
-                                st.success("Correction pushed to GitHub!")
-                                st.rerun()
-                        else:
-                            st.session_state.corrected_errors.add(key)
-                            st.success("Correction logged locally!")
-                            st.rerun()
-                    else: 
-                        st.error("Justification explanation comment is required.")
-
-if __name__ == "__main__":
-    main()
+                # Excel/CSV download utility link button injection
+                st.download_button(
+                    label="📥 Download Master Corrections Log (Excel/CSV)",
+                    data=csv_data,
+                    file_name=f"HFC_Master_Corrections_Report_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
