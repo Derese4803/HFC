@@ -1,4 +1,21 @@
 # HFC
+1. Upload constraints.csv (Range & Data Type Violations)
+The constraints file contains data that is physically or logically impossible based on standalone business rules. It flags errors where an entered number falls outside a normal, acceptable range.
+
+The Logic: It evaluates a single data point against a fixed threshold rule (e.g., minimum or maximum boundaries).
+
+Example: A field agent inputs a farmer's age as 180 or a phone number with only 3 digits.
+
+How it looks in the app: The app calculates the allowed boundary from the rule (e.g., age must be between 18 and 100) and warns the enumerator if their corrected value still breaks the rule.
+
+2. Upload logic.csv (System Mismatches & Reconciliation)
+The logic file tracks discrepancies between two different data sources that should match but don't. It is used for cross-checking and system reconciliation.
+
+The Logic: It compares a value reported by the field agent against an existing baseline record already stored in the system database (referred to in the code as the "Troster Value").
+
+Example: The field agent reports that a farmer delivered 50 bags of crops, but the warehouse digital scale/system record shows they only checked in 35 bags.
+
+How it looks in the app: The app displays a side-by-side comparison using metrics cards showing "Your Report", "System Record", and the calculated "Difference" (Delta) so the agent can figure out which number is correct.
  Step 1: Upload Baseline System Datasets
 Step 2: Select Your Enumerator Identifier Code
 Once the datasets are loaded, the system reads the username column inside your CSV files and automatically builds a dynamic menu.
