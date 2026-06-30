@@ -14,6 +14,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- AUTO-DETECT COLUMN HELPER ---
+def get_column(df, options):
+    for col in df.columns:
+        if col.lower() in [o.lower() for o in options]:
+            return col
+    return df.columns[0] # Fallback
+
 if 'corrections' not in st.session_state: st.session_state.corrections = []
 
 st.title("🛠️ HFC Data Correction Dashboard")
@@ -27,14 +34,19 @@ if st.session_state.get('data') is None and token:
 
 if st.session_state.get('data') is not None:
     df = st.session_state.data
-    user = st.sidebar.selectbox("Select Your Username", df['enumerator'].unique())
+    
+    # Smart detection for columns
+    user_col = get_column(df, ['enumerator', 'username', 'user', 'enumerator_name'])
+    id_col = get_column(df, ['unique_id', 'id', 'farmer_id'])
+    
+    user = st.sidebar.selectbox("Select Your Username", df[user_col].unique())
     
     # --- METRICS & PROGRESS ---
-    user_data = df[df['enumerator'] == user]
+    user_data = df[df[user_col] == user]
     corrected = [c for c in st.session_state.corrections if c['corrected_by'] == user]
     pct = (len(corrected) / len(user_data) * 100) if len(user_data) > 0 else 0
     
-    st.markdown(f"**Completion Progress for {user}:**")
+    st.markdown(f"**Progress for {user}:**")
     st.markdown(f'<div class="progress-bar"><div class="progress-fill" style="width: {pct}%"></div></div>', unsafe_allow_html=True)
     
     c1, c2, c3 = st.columns(3)
@@ -44,14 +56,13 @@ if st.session_state.get('data') is not None:
 
     # --- PENDING CARDS ---
     st.subheader("📋 Pending Tasks")
-    pending = user_data[~user_data['unique_id'].isin([c['unique_id'] for c in corrected])]
+    pending = user_data[~user_data[id_col].astype(str).isin([str(c['unique_id']) for c in corrected])]
     
     for _, row in pending.iterrows():
         with st.container():
-            st.markdown(f'<div class="farmer-card"><b>ID: {row["unique_id"]}</b> - Issue: {row["constraint"]}</div>', unsafe_allow_html=True)
-            if st.button(f"Fix {row['unique_id']}", key=row['unique_id']):
-                # Correction form appears here
-                st.session_state.target = row['unique_id']
+            st.markdown(f'<div class="farmer-card"><b>ID: {row[id_col]}</b> - Issue: {row.get("constraint", "N/A")}</div>', unsafe_allow_html=True)
+            if st.button(f"Fix {row[id_col]}", key=str(row[id_col])):
+                st.session_state.target = row[id_col]
     
     # --- ADMIN EXPORT ---
     if st.sidebar.checkbox("Admin Access"):
