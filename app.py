@@ -23,6 +23,7 @@ ENUMERATOR_PASSWORD = "1234"
 # GitHub Configuration Details
 GITHUB_REPO = "mohammed-seid/hfc-data-private"
 SOURCE_FILE = "Constriantt.csv"
+LOGIC_FILE = "logic.csv"
 OUTPUT_FILE = "corrections_papaya.csv"
 
 # Fetch token safely from Streamlit Secrets or environment variables
@@ -210,7 +211,7 @@ if st.session_state.constraints_df is None:
     st.subheader("📋 Step 1: Connect & Fetch Source Files")
     
     if not GITHUB_TOKEN:
-        st.warning("⚠️ GitHub Access Token is missing. Provide it below or save it in Streamlit Secrets.")
+        st.warning("⚠️ GitHub Access Token is missing from Streamlit Secrets.")
         input_token = st.text_input("Enter GitHub Personal Access Token (PAT):", type="password")
         if input_token:
             GITHUB_TOKEN = input_token
@@ -220,11 +221,21 @@ if st.session_state.constraints_df is None:
             st.error("Cannot fetch repository files without a valid GitHub Access Token.")
         else:
             with st.spinner("Fetching dynamic dataset configurations..."):
-                fetched_df = fetch_file_from_github(GITHUB_REPO, SOURCE_FILE, GITHUB_TOKEN)
-                if fetched_df is not None:
-                    st.session_state.constraints_df = fetched_df
-                    st.session_state.logic_df = pd.DataFrame()
-                    st.success(f"Successfully pulled fresh data structure from {SOURCE_FILE}!")
+                # 1. Fetch Constraints File
+                fetched_constraints = fetch_file_from_github(GITHUB_REPO, SOURCE_FILE, GITHUB_TOKEN)
+                
+                if fetched_constraints is not None:
+                    st.session_state.constraints_df = fetched_constraints
+                    
+                    # 2. Fetch Logic File (Smoothly falls back to empty if not present)
+                    fetched_logic = fetch_file_from_github(GITHUB_REPO, LOGIC_FILE, GITHUB_TOKEN)
+                    if fetched_logic is not None:
+                        st.session_state.logic_df = fetched_logic
+                        st.success(f"Successfully pulled {SOURCE_FILE} and {LOGIC_FILE}!")
+                    else:
+                        st.session_state.logic_df = pd.DataFrame()
+                        st.success(f"Successfully pulled fresh data structure from {SOURCE_FILE}!")
+                    
                     st.rerun()
 
     st.write("---")
@@ -247,6 +258,11 @@ if st.session_state.constraints_df is not None:
     user_col_c = find_user_column(st.session_state.constraints_df)
     if user_col_c:
         all_users.update(st.session_state.constraints_df[user_col_c].dropna().astype(str).str.strip().unique())
+
+if st.session_state.logic_df is not None and not st.session_state.logic_df.empty:
+    user_col_l = find_user_column(st.session_state.logic_df)
+    if user_col_l:
+        all_users.update(st.session_state.logic_df[user_col_l].dropna().astype(str).str.strip().unique())
 
 VALID_ENUMERATORS = sorted(list(all_users))
 
@@ -433,11 +449,4 @@ if st.session_state.corrections_list:
 
     csv_buffer = io.StringIO()
     export_df.to_csv(csv_buffer, index=False)
-    st.download_button(
-        label="Download Corrections CSV File (Local Backup)",
-        data=csv_buffer.getvalue(),
-        file_name=f"corrections_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv"
-    )
-else:
-    st.info("No corrections have been submitted in this browser session yet.")
+    st
