@@ -1,60 +1,50 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import io
-import requests
-import base64
+from database import fetch_file, commit_file
+from models import Correction
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="HFC Data Correction App", layout="wide")
-GITHUB_REPO = "Derese4803/HFC"
-SOURCE_FILE = "Constriantt.csv"
-LOGIC_FILE = "logic.csv"
-OUTPUT_FILE = "corrections_papaya.csv"
-ENUMERATOR_PASSWORD = "1234"
+# --- SETUP ---
+st.set_page_config(layout="wide")
+if 'corrections' not in st.session_state: st.session_state.corrections = []
 
-# --- GITHUB HELPERS ---
-def fetch_file_from_github(repo, filepath, token):
-    url = f"https://api.github.com/repos/{repo}/contents/{filepath}"
-    headers = {"Authorization": f"token {token}"}
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        content = base64.b64decode(response.json()['content']).decode('utf-8')
-        return pd.read_csv(io.StringIO(content))
-    return None
+# --- AUTH & ADMIN ---
+st.sidebar.title("Login / Admin")
+user = st.sidebar.text_input("Enumerator Username")
+admin_toggle = st.sidebar.checkbox("Admin Mode")
+if admin_toggle and st.sidebar.text_input("PIN", type="password") != "9999":
+    st.error("Invalid Admin PIN")
+    admin_toggle = False
 
-# --- INITIALIZATION ---
-if 'constraints_df' not in st.session_state: st.session_state.constraints_df = None
-if 'is_authenticated' not in st.session_state: st.session_state.is_authenticated = False
-
-# --- UI: STEP 1 - CONNECT ---
-if st.session_state.constraints_df is None:
-    st.title("🛠️ HFC Data Correction App")
-    token = st.text_input("Enter your GitHub Token (with 'repo' scope):", type="password")
-    if st.button("Pull Data from GitHub"):
-        df = fetch_file_from_github(GITHUB_REPO, SOURCE_FILE, token)
-        if df is not None:
-            st.session_state.constraints_df = df
-            st.session_state.token = token
-            st.success("Data Loaded!")
-            st.rerun()
-        else:
-            st.error("Failed to fetch. Verify your token permissions and file name.")
+# --- LOAD DATA ---
+if st.session_state.get('data') is None:
+    token = st.text_input("GitHub Token", type="password")
+    if st.button("Connect"):
+        st.session_state.data = fetch_file("Constriantt.csv", token)
+        st.rerun()
     st.stop()
 
-# --- UI: STEP 2 - DASHBOARD ---
-if not st.session_state.is_authenticated:
-    st.subheader("🔐 Login")
-    username = st.text_input("Username")
-    pin = st.text_input("PIN", type="password")
-    if st.button("Login"):
-        if pin == ENUMERATOR_PASSWORD:
-            st.session_state.is_authenticated = True
-            st.session_state.user = username
-            st.rerun()
-else:
-    st.write(f"Welcome, {st.session_state.user}!")
-    st.dataframe(st.session_state.constraints_df)
-    if st.button("Logout"):
-        st.session_state.is_authenticated = False
-        st.rerun()
+# --- DASHBOARD LOGIC ---
+df = st.session_state.data
+corr_df = pd.DataFrame(st.session_state.corrections)
+
+# Split views
+pending = df[~df['unique_id'].isin(corr_df['unique_id'] if not corr_df.empty else [])]
+
+tab1, tab2, tab3 = st.tabs(["Pending Corrections", "History", "Performance Stats"])
+
+with tab1:
+    st.write(f"Hello {user}, you have {len(pending)} pending tasks.")
+    # Implementation of your correction entry form goes here...
+
+with tab3:
+    st.subheader("Enumerator Performance Tracker")
+    if not corr_df.empty:
+        stats = corr_df.groupby('corrected_by').size() / df.groupby('enumerator').size()
+        st.bar_chart(stats * 100)
+    else:
+        st.info("No data to display yet.")
+
+if admin_toggle:
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Sync to GitHub"):
+        commit_file("corrections.csv", "YOUR_TOKEN", corr_df, "Audit update")
