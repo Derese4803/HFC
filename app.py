@@ -1,59 +1,69 @@
 import streamlit as st
 import pandas as pd
-import io
 
-# --- CONFIG & STYLING ---
-st.set_page_config(page_title="HFC Professional Suite", layout="wide")
+# --- CONFIG & STATE ---
+st.set_page_config(page_title="ET Papaya HFC System", layout="wide")
+if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+if 'role' not in st.session_state: st.session_state.role = None
 if 'corrections' not in st.session_state: st.session_state.corrections = []
 
-st.title("🛠️ HFC Data Correction & Reporting Suite")
-
-# --- DATA LOAD ---
-token = st.sidebar.text_input("GitHub Token", type="password")
-if st.session_state.get('data') is None and token:
-    # Use your fetch_file logic here...
-    pass 
-
-if st.session_state.get('data') is not None:
-    df = st.session_state.data
+def login_ui():
+    st.title("🔐 ET Papaya HFC System")
+    with st.expander("📋 Instructions for Enumerators"):
+        st.write("1. Select your username.\n2. Enter your 4-digit PIN.\n3. Complete your pending tasks.")
     
-    # --- SIDEBAR: DOWNLOADS & EXPORTS ---
-    st.sidebar.header("💾 Download Data")
-    if st.session_state.corrections:
-        corr_df = pd.DataFrame(st.session_state.corrections)
-        csv = corr_df.to_csv(index=False).encode('utf-8')
-        st.sidebar.download_button("All Corrections (CSV)", csv, "corrections.csv", "text/csv")
-    
-    # --- MAIN TABS ---
-    tab1, tab2, tab3 = st.tabs(["📋 Pending Tasks", "👥 Enumerator Stats", "🎯 Error Type Overview"])
-    
+    tab1, tab2 = st.tabs(["👤 Enumerator Login", "👑 Admin Login"])
     with tab1:
-        # [Insert your Pending Tasks loop here]
-        st.write("Work on your assigned tasks...")
-
+        user = st.selectbox("Select Username", ["asfaw.m", "henok", "asfaw.f", "abreham", "tigist.p"])
+        pw = st.text_input("Password", type="password", key="p1")
+        if st.button("Login as Enumerator"):
+            if pw == "1234":
+                st.session_state.update({'authenticated': True, 'role': 'enumerator', 'user': user})
+                st.rerun()
     with tab2:
-        st.header("👥 Enumerator Statistics")
-        # Logic to calculate stats per enumerator
-        stats = pd.DataFrame({'Enumerator': ['Asfaw', 'Henok'], 'Solved': [10, 5], 'Remaining': [2, 7]})
-        st.table(stats)
-        
-        st.subheader("⚠️ Enumerators Without Errors")
-        st.info("All enumerators are currently active and reporting.")
+        admin_pw = st.text_input("Admin Password", type="password", key="p2")
+        if st.button("Login as Admin"):
+            if admin_pw == "admin_papaya_2026":
+                st.session_state.update({'authenticated': True, 'role': 'admin', 'user': 'Admin'})
+                st.rerun()
 
-    with tab3:
+def main():
+    if not st.session_state.authenticated:
+        login_ui()
+        return
+
+    # --- HEADER & LOGOUT ---
+    col1, col2 = st.columns([6, 1])
+    col1.title(f"🛠️ HFC Suite | {st.session_state.role.capitalize()}")
+    if col2.button("Logout"):
+        st.session_state.authenticated = False
+        st.rerun()
+
+    # --- DASHBOARD LOGIC ---
+    if st.session_state.role == "admin":
+        tab_tasks, tab_stats, tab_errors = st.tabs(["📋 Pending Tasks", "👥 Enumerator Statistics", "🎯 Error Type Overview"])
+    else:
+        tab_tasks, tab_stats, tab_errors = st.tabs(["📋 My Tasks", "👥 My Stats", "🎯 Error Analysis"])
+
+    with tab_tasks:
+        st.subheader("Pending Data Corrections")
+        # [Insert Data Fetch & Loop Logic Here]
+
+    with tab_stats:
+        st.header("👥 Enumerator & Overall Statistics")
+        # 💾 DOWNLOAD DATA
+        st.sidebar.header("💾 Download Data")
+        if st.session_state.corrections:
+            corr_df = pd.DataFrame(st.session_state.corrections)
+            st.sidebar.download_button("Export Corrections", corr_df.to_csv(index=False), "log.csv")
+        
+        # Statistics logic
+        st.success("Enumerators without errors: All clear!")
+
+    with tab_errors:
         st.header("🎯 Error Type Overview")
-        col1, col2 = st.columns(2)
-        
-        # Breakdown analysis
-        col1.metric("Constraint Errors", "142")
-        col2.metric("Logic Errors", "89")
-        
         st.subheader("📊 High Frequency Check Summary")
-        # Logic for frequency distribution
-        st.bar_chart(pd.DataFrame({'Errors': [142, 89]}, index=['Constraint', 'Logic']))
+        # [Insert Error Analysis Visualization Here]
 
-# --- ADMINISTRATIVE OVERALL STATS ---
-if st.sidebar.checkbox("Show Overall Statistics"):
-    st.sidebar.write("### Overall System Stats")
-    st.sidebar.metric("Total Records Processed", len(st.session_state.corrections))
-    st.sidebar.metric("System Health", "98% Stable")
+if __name__ == "__main__":
+    main()
