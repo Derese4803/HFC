@@ -6,30 +6,23 @@ import io
 import os
 from datetime import datetime
 
-# 🎨 PAGE CONFIGURATION
-st.set_page_config(page_title="HFC Field-Data Correction System", page_icon="🛠️", layout="wide")
+# 🎨 CONFIGURATION
+st.set_page_config(page_title="HFC Correction System", layout="wide")
 
-# 🔐 GITHUB FETCHING (READ-ONLY)
+# 🔐 GITHUB FETCHING
 def fetch_from_github(filename):
     try:
         token = st.secrets["github"]["token"]
-        owner = "Derese4803"
-        repo = "HFC"
-        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{filename}?ref=main"
+        url = f"https://api.github.com/repos/Derese4803/HFC/contents/{filename}?ref=main"
         headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-        
         res = requests.get(url, headers=headers)
         if res.status_code == 200:
             content = base64.b64decode(res.json()['content']).decode('utf-8')
             return pd.read_csv(io.StringIO(content))
-        else:
-            st.warning(f"Could not load {filename} (Status: {res.status_code})")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to GitHub: {e}")
         return None
+    except: return None
 
-# 🔄 INITIALIZE SESSION STATES
+# 🔄 STATE
 if "corrected_errors" not in st.session_state: st.session_state.corrected_errors = set()
 if "master_log" not in st.session_state: st.session_state.master_log = []
 if "admin_logged_in" not in st.session_state: st.session_state.admin_logged_in = False
@@ -40,12 +33,10 @@ logic_df = fetch_from_github("Logicc.csv")
 
 # ⚙️ SIDEBAR
 with st.sidebar:
-    st.title("⚙️ System Control Panel")
+    st.title("⚙️ Control Panel")
     if not st.session_state.admin_logged_in:
         if st.text_input("Admin Password", type="password") == "admin123":
-            if st.button("Log In"):
-                st.session_state.admin_logged_in = True
-                st.rerun()
+            if st.button("Log In"): st.session_state.admin_logged_in = True; st.rerun()
     else:
         st.success("🔓 Admin Mode Active")
         if st.button("Log Out"): st.session_state.admin_logged_in = False; st.rerun()
@@ -53,36 +44,52 @@ with st.sidebar:
 # 📑 MAIN INTERFACE
 st.title("🛠️ HFC Structural Field-Data Correction System")
 
-if constraints_df is None and logic_df is None:
-    st.error("Datasets could not be loaded. Please check repository file names and GitHub secrets.")
+if constraints_df is None or logic_df is None:
+    st.error("Data missing. Ensure Constriantt.csv and Logicc.csv are in the repo.")
     st.stop()
 
 # 👥 ENUMERATOR SELECTION
 all_users = sorted(list(set(constraints_df['username'].dropna().unique()) | set(logic_df['username'].dropna().unique())))
 selected_enum = st.selectbox("Select Your Identifier:", ["-- Select ID --"] + all_users)
 
-if selected_enum == "-- Select ID --": st.stop()
+if selected_enum != "-- Select ID --":
+    # 🔍 FILTER
+    u_c = constraints_df[constraints_df['username'] == selected_enum]
+    u_l = logic_df[logic_df['username'] == selected_enum]
+    
+    tab1, tab2 = st.tabs(["📋 My Tasks", "👑 Admin Summary"])
+    
+    with tab1:
+        st.subheader(f"Backlog for {selected_enum}")
+        for idx, row in u_c.iterrows():
+            with st.expander(f"Constraint Error: {row.get('unique_id', idx)}"):
+                val = st.text_input(f"Correction", key=f"c_{idx}")
+                just = st.text_input(f"Justification", key=f"j_{idx}")
+                if st.button("Submit", key=f"b_c_{idx}"):
+                    st.session_state.master_log.append({'username': selected_enum, 'id': row.get('unique_id'), 'fix': val, 'time': datetime.now().strftime('%H:%M:%S')})
+                    st.rerun()
 
-# 🔍 FILTER DATA
-user_constraints = constraints_df[constraints_df['username'].astype(str) == selected_enum]
-user_logic = logic_df[logic_df['username'].astype(str) == selected_enum]
+    with tab2:
+        if st.session_state.admin_logged_in:
+            st.subheader("👑 High Frequency Check Summary")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Errors", len(constraints_df) + len(logic_df))
+            c2.metric("Constraint", len(constraints_df))
+            c3.metric("Logic", len(logic_df))
+            c4.metric("Farmers", len(set(constraints_df['unique_id'].tolist() + logic_df['unique_id'].tolist())))
+            
+            combined = pd.concat([constraints_df, logic_df])
+            st.write("### 📊 Error Rate by Enumerator")
+            st.bar_chart(combined['username'].value_counts())
+            
+            st.write("### 📉 Overall Statistics")
+            st.dataframe(combined.groupby('username').size().reset_index(name='Total Errors'))
+            
+            if st.session_state.master_log:
+                log_df = pd.DataFrame(st.session_state.master_log)
+                st.download_button("📥 Download Master Log", log_df.to_csv(index=False), "final_log.csv")
+        else:
+            st.warning("🔒 Please login as admin in the sidebar to view metrics.")
 
-# 🛠️ PROCESSING WORKFLOW
-for idx, row in user_constraints.iterrows():
-    key = f"c_{idx}"
-    if key in st.session_state.corrected_errors: continue
-    with st.expander(f"❌ Error ID: {row.get('unique_id', idx)}"):
-        corr_val = st.text_input(f"Correction", key=f"inp_c_{idx}")
-        justification = st.text_input(f"Justification", key=f"inp_j_{idx}")
-        if st.button("Commit", key=f"btn_c_{idx}"):
-            new_row = {'error_type': 'Range', 'username': selected_enum, 'unique_id': row.get('unique_id'), 'corrected_value': corr_val, 'explanation': justification, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            st.session_state.master_log.append(new_row)
-            st.session_state.corrected_errors.add(key)
-            st.rerun()
-
-# 👑 ADMIN EXPORT
-if st.session_state.admin_logged_in:
-    if st.session_state.master_log:
-        df_log = pd.DataFrame(st.session_state.master_log)
-        st.dataframe(df_log)
-        st.download_button("📥 Download Master Log", df_log.to_csv(index=False), "log.csv")
+if __name__ == "__main__":
+    main()
