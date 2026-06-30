@@ -26,7 +26,6 @@ SOURCE_FILE = "Constriantt.csv"
 OUTPUT_FILE = "corrections_papaya.csv"
 
 # Fetch token safely from Streamlit Secrets or environment variables
-# To set this up, add GITHUB_TOKEN = "your_token" to your .streamlit/secrets.toml file
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 
 # ============================================================================
@@ -168,7 +167,6 @@ def commit_file_to_github(repo, filepath, token, df, commit_message="Update corr
     url = f"https://api.github.com/repos/{repo}/contents/{filepath}"
     headers = {"Authorization": f"token {token}"}
     
-    # Check if file already exists to get its SHA hash (required for updates)
     get_resp = requests.get(url, headers=headers)
     sha = get_resp.json().get('sha') if get_resp.status_code == 200 else None
     
@@ -225,12 +223,12 @@ if st.session_state.constraints_df is None:
                 fetched_df = fetch_file_from_github(GITHUB_REPO, SOURCE_FILE, GITHUB_TOKEN)
                 if fetched_df is not None:
                     st.session_state.constraints_df = fetched_df
-                    st.session_state.logic_df = pd.DataFrame() # Fallback empty logic rules sheet
+                    st.session_state.logic_df = pd.DataFrame()
                     st.success(f"Successfully pulled fresh data structure from {SOURCE_FILE}!")
                     st.rerun()
 
     st.write("---")
-    st.info("💡 Alternatively, you can drop a temporary local file below override style:")
+    st.info("💡 Alternatively, you can drop a temporary local file below to override style:")
     c_file = st.file_uploader("Upload Backup Constraints CSV (Local Mirror)", type=["csv"])
     if c_file:
         st.session_state.constraints_df = pd.read_csv(c_file)
@@ -289,7 +287,6 @@ if not st.session_state.is_authenticated:
 enum_id = st.session_state.selected_enumerator
 st.subheader(f"👋 Active Session: `{enum_id}`")
 
-# Sidebar navigation options
 if st.sidebar.button("🚪 Logout Session"):
     st.session_state.is_authenticated = False
     st.session_state.selected_enumerator = None
@@ -302,7 +299,6 @@ if st.sidebar.button("🔄 Clear Uploads & Start Over"):
 c_df = st.session_state.constraints_df
 l_df = st.session_state.logic_df
 
-# Filter rows by active logged-in username
 user_col_c = find_user_column(c_df) or 'username'
 c_user = c_df[c_df[user_col_c].astype(str).str.lower().str.strip() == str(enum_id).lower().strip()].copy() if user_col_c in c_df.columns else c_df.copy()
 
@@ -312,7 +308,6 @@ if l_df is not None and not l_df.empty:
 else:
     l_user = pd.DataFrame()
 
-# Match standard column keys dynamically
 id_col = get_column_by_alternatives(c_user, ['unique_id', 'id', 'farmer_id', 'number'], 'number')
 name_col = get_column_by_alternatives(c_user, ['name', 'respondent', 'farmer'], 'respondent_name')
 phone_col = get_column_by_alternatives(c_user, ['phone', 'mobile', 'telephone'], 'phone_no')
@@ -322,10 +317,8 @@ woreda_col = get_column_by_alternatives(c_user, ['woreda', 'district'], 'woreda'
 kebele_col = get_column_by_alternatives(c_user, ['kebele'], 'kebele_name')
 village_col = get_column_by_alternatives(c_user, ['village', 'gote'], 'village_name')
 
-# Index errors by unique farmer ID
 combined_farmers_index = {}
 
-# Load Constraints
 for idx, row in c_user.iterrows():
     f_id = str(row.get(id_col, idx))
     error_key = f"constraint_{f_id}_{row.get('variable', 'var')}"
@@ -335,7 +328,6 @@ for idx, row in c_user.iterrows():
         combined_farmers_index[f_id] = {'meta': row, 'issues': []}
     combined_farmers_index[f_id]['issues'].append({'type': 'Constraint', 'row': row, 'key': error_key})
 
-# Load Logics
 for idx, row in l_user.iterrows():
     f_id = str(row.get(id_col, idx))
     error_key = f"logic_{f_id}_{row.get('variable', 'var')}"
@@ -348,7 +340,6 @@ for idx, row in l_user.iterrows():
 total_backlog = len(combined_farmers_index)
 completed_count = len({item['unique_id'] for item in st.session_state.corrections_list})
 
-# Display Progress
 total_tasks = total_backlog + completed_count
 percentage = (completed_count / total_tasks * 100) if total_tasks > 0 else 0
 st.markdown(f"""
@@ -392,4 +383,57 @@ else:
                 st.markdown(f"**Collected Value:** `{bad_val}`")
                 
                 corrected_val = st.text_input("Enter Corrected Value", key=f"input_{iss['key']}")
-                justification = st.text_area("Justification Notes/Explanation", key=f"notes_{iss['key']}", placeholder="
+                justification = st.text_area("Justification Notes/Explanation", key=f"notes_{iss['key']}", placeholder="Why is this change being made?")
+                
+                if st.button("Save Entry Correction", key=f"btn_{iss['key']}"):
+                    if not corrected_val or not justification:
+                        st.error("Please fill out both fields before saving.")
+                    else:
+                        st.session_state.corrections_list.append({
+                            'key': iss['key'],
+                            'error_type': iss['type'],
+                            'unique_id': f_id,
+                            'farmer_name': f_name,
+                            'variable': var_name,
+                            'original_value': bad_val,
+                            'corrected_value': corrected_val,
+                            'explanation': justification,
+                            'corrected_by': enum_id,
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        })
+                        st.success("Correction saved locally!")
+                        st.rerun()
+
+# ============================================================================
+# EXPORT DATA COMPILING LAYER WITH GITHUB SYNC
+# ============================================================================
+st.write("---")
+st.subheader("📥 Sync Cleaned Dataset Logs")
+
+if st.session_state.corrections_list:
+    export_df = pd.DataFrame(st.session_state.corrections_list)
+    st.dataframe(export_df, use_container_width=True)
+    
+    if st.button("☁️ Commit Corrections Directly to GitHub"):
+        if not GITHUB_TOKEN:
+            st.error("Missing personal token. Setup access permission variables first.")
+        else:
+            with st.spinner(f"Pushing changes securely back to {OUTPUT_FILE}..."):
+                success = commit_file_to_github(
+                    repo=GITHUB_REPO,
+                    filepath=OUTPUT_FILE,
+                    token=GITHUB_TOKEN,
+                    df=export_df,
+                    commit_message=f"Automated log adjustments by {enum_id} on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                if success:
+                    st.success(f"🎉 Securely synced and saved data matrix to GitHub: `{OUTPUT_FILE}`!")
+                else:
+                    st.error("Git target branch verification failed. Confirm write authorization scopes.")
+
+    csv_buffer = io.StringIO()
+    export_df.to_csv(csv_buffer, index=False)
+    st.download_button(
+        label="Download Corrections CSV File (Local Backup)",
+        data=csv_buffer.getvalue(),
+        file_name=f"corre
