@@ -7,7 +7,7 @@ import io
 # 🎨 PAGE CONFIGURATION
 st.set_page_config(page_title="HFC Correction System", layout="wide")
 
-# 🔐 GITHUB DATA FETCHING (READ-ONLY)
+# 🔐 GITHUB DATA FETCHING
 def fetch_from_github(filename):
     try:
         token = st.secrets["github"]["token"]
@@ -31,11 +31,10 @@ def main():
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
 
-    # --- SIDEBAR: LOGIN & INSTRUCTIONS ---
+    # --- SIDEBAR ---
     with st.sidebar:
         if st.session_state.logged_in_as is None:
             st.subheader("👤 Enumerator Login")
-            # Automatically detect users from CSV
             all_users = sorted(df_c['username'].dropna().unique()) if df_c is not None else []
             user = st.selectbox("Select Username", all_users)
             if st.text_input("Password", type="password") == "1234":
@@ -57,26 +56,29 @@ def main():
                 st.session_state.logged_in_as = None
                 st.rerun()
 
-    if df_c is None or df_l is None:
-        st.error("Could not load data from GitHub. Check your configuration."); return
+    if df_c is None:
+        st.error("Data not loaded. Check GitHub token/filename."); return
 
     # --- ENUMERATOR VIEW ---
     if st.session_state.logged_in_as == "enumerator":
         st.success(f"Welcome, {st.session_state.user}")
         
-        # Filter: Only show rows for this user that are NOT in the master_log
-        fixed_ids = [entry['id'] for entry in st.session_state.master_log]
+        # Consistent use of 'number' as the ID key
+        fixed_ids = [entry['number'] for entry in st.session_state.master_log]
         u_c = df_c[df_c['username'] == st.session_state.user]
-        u_c_filtered = u_c[~u_c['number'].isin(fixed_ids)] # Assuming 'number' is your ID col
+        u_c_filtered = u_c[~u_c['number'].isin(fixed_ids)]
         
         st.subheader(f"📋 You have {len(u_c_filtered)} errors remaining")
         
         for idx, row in u_c_filtered.iterrows():
             with st.expander(f"Error in {row.get('variable')} (ID: {row.get('number')})"):
-                st.write(f"**Constraint Issue:** {row.get('constraint')}")
                 fix = st.text_input("Enter Correction", key=f"fix_{idx}")
                 if st.button("Submit Fix", key=f"btn_{idx}"):
-                    st.session_state.master_log.append({'user': st.session_state.user, 'id': row.get('number'), 'fix': fix})
+                    st.session_state.master_log.append({
+                        'user': st.session_state.user, 
+                        'number': row.get('number'), 
+                        'fix': fix
+                    })
                     st.rerun()
 
     # --- ADMIN VIEW ---
