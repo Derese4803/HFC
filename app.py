@@ -9,15 +9,15 @@ import os
 from typing import Tuple, Optional, List, Dict
 
 # ============================================================================
-# CONFIGURATION
+# CONFIGURATION & BRANDING
 # ============================================================================
 
 st.set_page_config(
-    page_title="ET Papaya HFC Data Correction",
+    page_title="HFC Data Correction App",
     layout="wide",
     initial_sidebar_state="collapsed",
     menu_items={
-        'About': "ET Papaya HFC Data Correction System v2.0"
+        'About': "HFC Data Correction App v2.0"
     }
 )
 
@@ -122,14 +122,6 @@ st.markdown("""
         color: white;
         text-align: center;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    
-    .enumerator-stats {
-        background: #f8f9fa;
-        padding: 16px;
-        border-radius: 8px;
-        margin-bottom: 12px;
-        border-left: 4px solid #667eea;
     }
     
     .login-box {
@@ -427,7 +419,7 @@ def render_farmer_header(farmer_name: str, phone_no: str, woreda: str, kebele: s
 
 # Safety Check: Is GitHub configured?
 if not get_github_headers():
-    st.title("🔑 Initial Core Configuration Setup Required")
+    st.title("🔑 Configuration Setup Required")
     st.error("GitHub Security Token is missing or not configured in your Streamlit secrets environment.")
     st.info("💡 **How to resolve this:**\n1. Go to your **Streamlit Cloud Dashboard**.\n2. Click settings on your active application instance -> **Secrets**.\n3. Add your token block configuration explicitly format like below:\n"
             "```toml\n[github]\ntoken = \"your_github_personal_access_token_here\"\n```")
@@ -447,7 +439,7 @@ VALID_ENUMERATORS = sorted(list(all_users)) if all_users else DEFAULT_ENUMERATOR
 
 # LOGIN INTERFACE
 if not st.session_state.is_authenticated:
-    st.title("🔐 ET Papaya Verification Entry Gate")
+    st.title("🔐 HFC Data Correction App Entry")
     
     with st.container():
         st.markdown('<div class="login-box">', unsafe_allow_html=True)
@@ -520,7 +512,7 @@ if st.session_state.is_admin:
 # ENUMERATOR ARCHITECTURE WORKFLOW
 # ============================================================================
 enum_id = st.session_state.selected_enumerator
-st.title(f"🛠️ HFC Core Tasklist: `{enum_id}`")
+st.title(f"🛠️ Tasks for profile: `{enum_id}`")
 
 if st.button("🚪 Logout Account"):
     st.session_state.is_authenticated = False
