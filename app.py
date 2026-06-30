@@ -27,7 +27,6 @@ if "master_log" not in st.session_state: st.session_state.master_log = []
 def main():
     st.title("🛠️ HFC Structural Field-Data Correction System")
 
-    # 📥 LOAD DATA
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
 
@@ -42,18 +41,13 @@ def main():
                     st.session_state.logged_in_as = "enumerator"
                     st.session_state.user = user
                     st.rerun()
-
             st.markdown("---")
             st.subheader("👑 Admin Login")
-            adm_u = st.text_input("Admin Username")
-            adm_p = st.text_input("Admin Password", type="password")
-            if st.button("Access Admin"):
-                if adm_u == "admin" and adm_p == "admin123":
-                    st.session_state.logged_in_as = "admin"
-                    st.rerun()
+            if st.button("Access Admin"): st.session_state.logged_in_as = "admin"; st.rerun()
         else:
-            if st.button("Logout"):
+            if st.button("Logout / Reset Session"):
                 st.session_state.logged_in_as = None
+                st.session_state.master_log = [] # Clear history to prevent KeyErrors
                 st.rerun()
 
     if df_c is None:
@@ -63,8 +57,8 @@ def main():
     if st.session_state.logged_in_as == "enumerator":
         st.success(f"Welcome, {st.session_state.user}")
         
-        # Consistent use of 'number' as the ID key
-        fixed_ids = [entry['number'] for entry in st.session_state.master_log]
+        # Safely extract fixed numbers
+        fixed_ids = [entry.get('number') for entry in st.session_state.master_log if entry.get('number') is not None]
         u_c = df_c[df_c['username'] == st.session_state.user]
         u_c_filtered = u_c[~u_c['number'].isin(fixed_ids)]
         
@@ -72,6 +66,7 @@ def main():
         
         for idx, row in u_c_filtered.iterrows():
             with st.expander(f"Error in {row.get('variable')} (ID: {row.get('number')})"):
+                st.write(f"**Issue:** {row.get('constraint')}")
                 fix = st.text_input("Enter Correction", key=f"fix_{idx}")
                 if st.button("Submit Fix", key=f"btn_{idx}"):
                     st.session_state.master_log.append({
