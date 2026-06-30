@@ -8,7 +8,7 @@ from datetime import datetime
 # 🎨 PAGE CONFIGURATION
 st.set_page_config(page_title="HFC Correction System", layout="wide")
 
-# 🔐 GITHUB FETCHING (READ-ONLY)
+# 🔐 GITHUB DATA FETCHING (READ-ONLY)
 def fetch_from_github(filename):
     try:
         token = st.secrets["github"]["token"]
@@ -18,18 +18,20 @@ def fetch_from_github(filename):
         if res.status_code == 200:
             return pd.read_csv(io.StringIO(base64.b64decode(res.json()['content']).decode('utf-8')))
         return None
-    except: return None
+    except Exception as e:
+        st.error(f"Error loading {filename}: {e}")
+        return None
 
-# 🔄 INITIALIZE STATE
+# 🛠️ HELPER: DYNAMIC ID DETECTION
+def get_id_col(df):
+    for col in ['unique_id', 'id', 'ID', 'number', 'farmer_id']:
+        if col in df.columns: return col
+    return df.columns[0]
+
+# 🔄 STATE INITIALIZATION
 if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
 if "user" not in st.session_state: st.session_state.user = None
 if "master_log" not in st.session_state: st.session_state.master_log = []
-
-# 🛠️ HELPER: DETECT ID COLUMN
-def get_id_col(df):
-    for col in ['unique_id', 'id', 'ID', 'FarmerID', 'number']:
-        if col in df.columns: return col
-    return df.columns[0]
 
 def main():
     st.title("🛠️ HFC Structural Field-Data Correction System")
@@ -38,7 +40,10 @@ def main():
     with st.sidebar:
         if st.session_state.logged_in_as is None:
             st.subheader("👤 Enumerator Login")
-            user = st.selectbox("Select Username", ["asfaw.m", "henok", "asfaw.f", "abreham", "tigist.p"])
+            # Automatically fetch users from CSV
+            df_temp = fetch_from_github("Constriantt.csv")
+            users = sorted(df_temp['username'].dropna().unique()) if df_temp is not None else []
+            user = st.selectbox("Select Username", users)
             if st.text_input("Password", type="password") == "1234":
                 if st.button("Login"):
                     st.session_state.logged_in_as = "enumerator"
@@ -58,17 +63,12 @@ def main():
                 st.session_state.logged_in_as = None
                 st.rerun()
 
-        st.markdown("---")
-        st.subheader("📋 Instructions")
-        st.write("• **Enumerators:** Select name, use pass '1234'.")
-        st.write("• **Admins:** Use credentials for system stats.")
-
     # --- LOAD DATA ---
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
 
     if df_c is None or df_l is None:
-        st.warning("Data loading... please wait or check your GitHub secrets.")
+        st.warning("Data loading... please check GitHub repository connectivity.")
         return
 
     # --- ENUMERATOR VIEW ---
@@ -77,30 +77,33 @@ def main():
         u_c = df_c[df_c['username'] == st.session_state.user]
         id_c = get_id_col(df_c)
         
+        st.subheader(f"📋 You have {len(u_c)} errors to fix")
         for idx, row in u_c.iterrows():
-            with st.expander(f"Fix Constraint Error ID: {row.get(id_c, idx)}"):
-                fix = st.text_input("Correction", key=f"c_{idx}")
-                if st.button("Submit Fix", key=f"s_{idx}"):
+            with st.expander(f"Error in {row.get('variable', 'Unknown')} (ID: {row.get(id_c, idx)})"):
+                st.write(f"**Issue:** {row.get('constraint', 'N/A')}")
+                fix = st.text_input("Enter Correction", key=f"fix_{idx}")
+                if st.button("Submit Fix", key=f"btn_{idx}"):
                     st.session_state.master_log.append({'user': st.session_state.user, 'id': row.get(id_c), 'fix': fix})
-                    st.success("Correction saved!")
+                    st.success("Correction saved to local session!")
 
     # --- ADMIN VIEW ---
     elif st.session_state.logged_in_as == "admin":
         st.subheader("👑 High Frequency Check Summary")
         id_c, id_l = get_id_col(df_c), get_id_col(df_l)
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Errors", len(df_c) + len(df_l))
-        c2.metric("Unique Farmers", pd.concat([df_c[id_c], df_l[id_l]]).nunique())
-        c3.metric("Enumerators Active", pd.concat([df_c['username'], df_l['username']]).nunique())
-        
         combined = pd.concat([df_c, df_l])
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Errors", len(combined))
+        c2.metric("Unique Farmers", combined[id_c].nunique())
+        c3.metric("Enumerators Active", combined['username'].nunique())
+        
+        st.write("### Error Rates by Enumerator")
         st.bar_chart(combined['username'].value_counts())
         
         if st.session_state.master_log:
             log_df = pd.DataFrame(st.session_state.master_log)
             st.dataframe(log_df)
-            st.download_button("📥 Download Master Log", log_df.to_csv(index=False), "master_report.csv")
+            st.download_button("📥 Download Master Report", log_df.to_csv(index=False), "master_report.csv")
 
 if __name__ == "__main__":
     main()
