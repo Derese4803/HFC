@@ -1,66 +1,84 @@
 import streamlit as st
 import pandas as pd
-from database import fetch_file, commit_file
+from datetime import datetime
+import io
+import re
+import requests
+import base64
 
-# --- CONFIG & STYLING ---
-st.set_page_config(page_title="HFC Professional Dashboard", layout="wide", page_icon="📊")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="ET Papaya HFC System", layout="wide")
 
-# --- DATA VALIDATION LOGIC ---
-def is_valid_input(val):
-    return val and len(str(val).strip()) > 0
+# --- DATA LOAD & UTILS ---
+# (Include your helper functions: get_unique_id_column, get_farmer_name_column, etc. here)
+# ... [Insert your helper functions from previous step] ...
 
-# --- APP START ---
-if 'corrections' not in st.session_state: st.session_state.corrections = []
+def main():
+    # --- AUTHENTICATION ---
+    if not st.session_state.get('is_authenticated'):
+        st.markdown('<div class="login-box">', unsafe_allow_html=True)
+        user = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if user in VALID_ENUMERATORS and password == ENUMERATOR_PASSWORD:
+                st.session_state.is_authenticated = True
+                st.session_state.selected_enumerator = user
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.stop()
 
-st.title("📊 HFC Professional Data Suite")
-
-# --- LOAD DATA ---
-token = st.sidebar.text_input("GitHub Token", type="password")
-if st.session_state.get('data') is None and token:
-    with st.spinner("Syncing with GitHub..."):
-        st.session_state.data = fetch_file("Constriantt.csv", token)
-        st.rerun()
-
-if st.session_state.get('data') is not None:
-    df = st.session_state.data
-    # Use your smart column detection logic here...
-    user = st.sidebar.selectbox("Active Enumerator", df['enumerator'].unique())
+    # --- MAIN APP UI ---
+    st.title("🌾 ET Papaya Data Correction")
     
-    # --- METRICS AREA ---
-    user_data = df[df['enumerator'] == user]
-    corrected = [c for c in st.session_state.corrections if c['corrected_by'] == user]
+    # Load Data (with caching)
+    constraints_df, logic_df = load_data_from_github()
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Assigned", len(user_data))
-    c2.metric("Fixed", len(corrected))
-    c3.metric("Remaining", len(user_data) - len(corrected))
+    # --- STATS DASHBOARD ---
+    stats_df = get_enumerator_statistics(constraints_df, logic_df)
+    current_enum_stats = stats_df[stats_df['Username'] == st.session_state.selected_enumerator]
+    
+    # Visual Progress Indicator
+    if not current_enum_stats.empty:
+        total = current_enum_stats['Total Errors'].iloc[0]
+        solved = current_enum_stats['Solved'].iloc[0]
+        render_progress_bar(solved, total)
 
-    # --- PENDING TASKS (The reliable way) ---
-    st.subheader("📝 Pending Tasks")
-    pending = user_data[~user_data['unique_id'].astype(str).isin([str(c['unique_id']) for c in st.session_state.corrections])]
+    # --- PENDING WORKSPACE ---
+    tab1, tab2 = st.tabs(["📝 Pending Tasks", "📊 My History"])
     
-    for idx, row in pending.iterrows():
-        # Unique keys combined with index ensures no collisions
-        with st.expander(f"Task: {row['unique_id']} | {row.get('constraint', 'Check Data')}"):
-            st.write(f"**Original Value:** {row.get('value', 'N/A')}")
+    with tab1:
+        # Filter logic to show only user's assigned errors
+        user_constraints = constraints_df[constraints_df['username'] == st.session_state.selected_enumerator]
+        
+        for idx, row in user_constraints.iterrows():
+            unique_id = row[get_unique_id_column(constraints_df)]
+            error_key = f"constraint_{unique_id}_{row['variable']}"
             
-            # Input with validation check
-            new_val = st.text_input("Corrected Value:", key=f"inp_{row['unique_id']}_{idx}")
-            
-            if st.button("Confirm Fix", key=f"btn_{row['unique_id']}_{idx}"):
-                if is_valid_input(new_val):
-                    st.session_state.corrections.append({
-                        'unique_id': row['unique_id'], 
-                        'corrected_value': new_val, 
-                        'corrected_by': user
-                    })
-                    st.success("Correction logged!")
-                    st.rerun()
-                else:
-                    st.error("Please enter a valid value before confirming.")
+            # Use expander for mobile-friendly interface
+            with st.expander(f"Task: {unique_id} - {row['variable']}"):
+                render_farmer_header(
+                    row.get('farmer_name', 'Unknown'), 
+                    row.get('phone_no', 'N/A'),
+                    row.get('woreda', 'N/A'), row.get('kebele', 'N/A'), row.get('village', 'N/A'),
+                    error_count=1
+                )
+                render_constraint_error(row, error_key, get_unique_id_column(constraints_df))
 
-    # --- ADMIN EXPORT AREA ---
-    if st.sidebar.checkbox("Admin Controls"):
-        if st.session_state.corrections:
-            corr_df = pd.DataFrame(st.session_state.corrections)
-            st.sidebar.download_button("Download All Records", corr_df.to_csv(index=False), "audit_log.csv")
+        if st.button("Submit All Corrections"):
+            is_valid, missing, comp, tot = validate_corrections()
+            if is_valid:
+                # Prepare and Save
+                corr_df = pd.DataFrame([v for v in st.session_state.all_corrections_data.values()])
+                if save_corrections_to_github(corr_df):
+                    st.success("Successfully pushed to GitHub!")
+            else:
+                st.error(f"Missing explanations for: {', '.join(missing)}")
+
+    with tab2:
+        st.subheader("Your Corrections")
+        # Display history from session state
+        if st.session_state.all_corrections_data:
+            st.write(pd.DataFrame([v for v in st.session_state.all_corrections_data.values()]))
+
+if __name__ == "__main__":
+    main()
