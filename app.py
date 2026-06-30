@@ -8,7 +8,7 @@ from datetime import datetime
 # --- CONFIGURATION ---
 st.set_page_config(page_title="HFC Correction System", layout="wide")
 
-# --- DATA FETCHING (READ-ONLY) ---
+# --- GITHUB DATA FETCHING ---
 def fetch_from_github(filename):
     try:
         token = st.secrets["github"]["token"]
@@ -28,7 +28,7 @@ if "master_log" not in st.session_state: st.session_state.master_log = []
 def main():
     st.title("🛠️ HFC Structural Field-Data Correction System")
 
-    # --- SIDEBAR: LOGIN & INSTRUCTIONS ---
+    # --- SIDEBAR: AUTH & INSTRUCTIONS ---
     with st.sidebar:
         st.subheader("👤 Enumerator Login")
         user = st.selectbox("Select Username", ["asfaw.m", "henok", "asfaw.f", "abreham", "tigist.p"])
@@ -44,45 +44,60 @@ def main():
 
         st.markdown("---")
         st.subheader("📋 Instructions")
-        st.write("**For Enumerators:** Select username, enter '1234' to start.")
-        st.write("**For Admins:** View all errors, track progress, and download logs.")
+        st.write("For Enumerator: Enter password: 1234")
+        st.write("For Administrators: View progress and download reports.")
 
-    # --- DATA LOADING ---
+    # --- LOAD DATA ---
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
 
     if df_c is None or df_l is None:
-        st.error("Data files not found in repository."); return
+        st.error("Data files not found. Check repository naming.")
+        return
+
+    # --- DYNAMIC ID DETECTION ---
+    def get_id_col(df):
+        # Look for common ID names; if none found, use the first column
+        for col in ['unique_id', 'id', 'ID', 'FarmerID', 'number']:
+            if col in df.columns: return col
+        return df.columns[0]
+
+    id_c, id_l = get_id_col(df_c), get_id_col(df_l)
 
     # --- ENUMERATOR VIEW ---
     if st.session_state.get("auth"):
         st.success(f"Welcome, {st.session_state.user}")
         u_c = df_c[df_c['username'] == st.session_state.user]
+        u_l = df_l[df_l['username'] == st.session_state.user]
+        
         for idx, row in u_c.iterrows():
-            with st.expander(f"Fix Error: {row.get('unique_id', idx)}"):
-                fix = st.text_input("Correction", key=f"f_{idx}")
-                if st.button("Submit Fix", key=f"s_{idx}"):
-                    st.session_state.master_log.append({'user': st.session_state.user, 'id': row['unique_id'], 'fix': fix})
-                    st.success("Saved locally!")
+            with st.expander(f"Fix Constraint Error ID: {row.get(id_c, idx)}"):
+                fix = st.text_input("Correction", key=f"c_{idx}")
+                if st.button("Submit Fix", key=f"sb_{idx}"):
+                    st.session_state.master_log.append({'user': st.session_state.user, 'id': row.get(id_c), 'fix': fix})
+                    st.success("Logged!")
 
     # --- ADMIN VIEW ---
     if st.session_state.get("admin"):
         st.subheader("👑 High Frequency Check Summary")
-        combined = pd.concat([df_c, df_l])
+        
+        # Safe Metric Calculation
+        total_errors = len(df_c) + len(df_l)
+        unique_farmers = pd.concat([df_c[id_c], df_l[id_l]]).nunique()
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Errors", len(combined))
-        c2.metric("Unique Farmers", combined['unique_id'].nunique())
-        c3.metric("Enumerators with Errors", combined['username'].nunique())
+        c1.metric("Total Errors", total_errors)
+        c2.metric("Unique Farmers", unique_farmers)
+        c3.metric("Enumerators Active", pd.concat([df_c['username'], df_l['username']]).nunique())
         
+        combined = pd.concat([df_c, df_l])
         st.write("### Error Rates by Enumerator")
         st.bar_chart(combined['username'].value_counts())
         
         if st.session_state.master_log:
-            st.write("### Submitted Corrections")
             log_df = pd.DataFrame(st.session_state.master_log)
             st.dataframe(log_df)
-            st.download_button("📥 Download All Reports", log_df.to_csv(index=False), "master_report.csv")
+            st.download_button("📥 Download Master Log", log_df.to_csv(index=False), "master_report.csv")
 
 if __name__ == "__main__":
     main()
