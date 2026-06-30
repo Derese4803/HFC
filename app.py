@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import io
+import requests
+import base64
 
 # ============================================================================
 # CONFIGURATION & BRANDING
@@ -17,6 +19,15 @@ st.set_page_config(
 )
 
 ENUMERATOR_PASSWORD = "1234"
+
+# GitHub Configuration Details
+GITHUB_REPO = "mohammed-seid/hfc-data-private"
+SOURCE_FILE = "Constriantt.csv"
+OUTPUT_FILE = "corrections_papaya.csv"
+
+# Fetch token safely from Streamlit Secrets or environment variables
+# To set this up, add GITHUB_TOKEN = "your_token" to your .streamlit/secrets.toml file
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 
 # ============================================================================
 # STYLING - Mobile-First Design
@@ -139,6 +150,43 @@ if 'selected_enumerator' not in st.session_state:
     st.session_state.selected_enumerator = None
 
 # ============================================================================
+# GITHUB API INTEGRATION HELPERS
+# ============================================================================
+
+def fetch_file_from_github(repo, filepath, token):
+    url = f"https://api.github.com/repos/{repo}/contents/{filepath}"
+    headers = {"Authorization": f"token {token}"} if token else {}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        content = base64.b64decode(response.json()['content']).decode('utf-8')
+        return pd.read_csv(io.StringIO(content))
+    else:
+        st.error(f"Failed to fetch {filepath} from GitHub. Error: {response.status_code}")
+        return None
+
+def commit_file_to_github(repo, filepath, token, df, commit_message="Update corrections"):
+    url = f"https://api.github.com/repos/{repo}/contents/{filepath}"
+    headers = {"Authorization": f"token {token}"}
+    
+    # Check if file already exists to get its SHA hash (required for updates)
+    get_resp = requests.get(url, headers=headers)
+    sha = get_resp.json().get('sha') if get_resp.status_code == 200 else None
+    
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False)
+    content_encoded = base64.b64encode(csv_buffer.getvalue().encode('utf-8')).decode('utf-8')
+    
+    data = {
+        "message": commit_message,
+        "content": content_encoded
+    }
+    if sha:
+        data["sha"] = sha
+        
+    put_resp = requests.put(url, headers=headers, json=data)
+    return put_resp.status_code in [200, 201]
+
+# ============================================================================
 # COLUMN DETECTION HELPERS
 # ============================================================================
 
@@ -155,33 +203,40 @@ def find_user_column(df: pd.DataFrame) -> str:
     return None
 
 # ============================================================================
-# STEP 1: FILE UPLOAD LEVEL
+# STEP 1: GITHUB CONNECTION / FILE LOADING
 # ============================================================================
 
 st.title("🛠️ HFC Data Correction App")
 
 if st.session_state.constraints_df is None:
-    st.subheader("📋 Step 1: Upload Source Error Metrics")
-    col1, col2 = st.columns(2)
+    st.subheader("📋 Step 1: Connect & Fetch Source Files")
     
-    with col1:
-        c_file = st.file_uploader("Upload Constraints CSV (e.g., Constriantt.csv)", type=["csv"])
-        if c_file:
-            st.session_state.constraints_df = pd.read_csv(c_file)
-            st.success("Constraints dataset uploaded!")
-            
-    with col2:
-        l_file = st.file_uploader("Upload Logic CSV (Optional)", type=["csv"])
-        if l_file:
-            st.session_state.logic_df = pd.read_csv(l_file)
-            st.success("Logic rules dataset uploaded!")
-        else:
-            # Create empty placeholder if no logic file is uploaded
-            if c_file:
-                st.session_state.logic_df = pd.DataFrame()
+    if not GITHUB_TOKEN:
+        st.warning("⚠️ GitHub Access Token is missing. Provide it below or save it in Streamlit Secrets.")
+        input_token = st.text_input("Enter GitHub Personal Access Token (PAT):", type="password")
+        if input_token:
+            GITHUB_TOKEN = input_token
 
-    if st.session_state.constraints_df is not None:
+    if st.button("🚀 Pull Source Files From GitHub"):
+        if not GITHUB_TOKEN:
+            st.error("Cannot fetch repository files without a valid GitHub Access Token.")
+        else:
+            with st.spinner("Fetching dynamic dataset configurations..."):
+                fetched_df = fetch_file_from_github(GITHUB_REPO, SOURCE_FILE, GITHUB_TOKEN)
+                if fetched_df is not None:
+                    st.session_state.constraints_df = fetched_df
+                    st.session_state.logic_df = pd.DataFrame() # Fallback empty logic rules sheet
+                    st.success(f"Successfully pulled fresh data structure from {SOURCE_FILE}!")
+                    st.rerun()
+
+    st.write("---")
+    st.info("💡 Alternatively, you can drop a temporary local file below override style:")
+    c_file = st.file_uploader("Upload Backup Constraints CSV (Local Mirror)", type=["csv"])
+    if c_file:
+        st.session_state.constraints_df = pd.read_csv(c_file)
+        st.session_state.logic_df = pd.DataFrame()
         st.rerun()
+        
     st.stop()
 
 # ============================================================================
@@ -194,11 +249,6 @@ if st.session_state.constraints_df is not None:
     user_col_c = find_user_column(st.session_state.constraints_df)
     if user_col_c:
         all_users.update(st.session_state.constraints_df[user_col_c].dropna().astype(str).str.strip().unique())
-
-if st.session_state.logic_df is not None and not st.session_state.logic_df.empty:
-    user_col_l = find_user_column(st.session_state.logic_df)
-    if user_col_l:
-        all_users.update(st.session_state.logic_df[user_col_l].dropna().astype(str).str.strip().unique())
 
 VALID_ENUMERATORS = sorted(list(all_users))
 
@@ -342,45 +392,4 @@ else:
                 st.markdown(f"**Collected Value:** `{bad_val}`")
                 
                 corrected_val = st.text_input("Enter Corrected Value", key=f"input_{iss['key']}")
-                justification = st.text_area("Justification Notes/Explanation", key=f"notes_{iss['key']}", placeholder="Why is this change being made?")
-                
-                if st.button("Save Entry Correction", key=f"btn_{iss['key']}"):
-                    if not corrected_val or not justification:
-                        st.error("Please fill out both fields before saving.")
-                    else:
-                        st.session_state.corrections_list.append({
-                            'key': iss['key'],
-                            'error_type': iss['type'],
-                            'unique_id': f_id,
-                            'farmer_name': f_name,
-                            'variable': var_name,
-                            'original_value': bad_val,
-                            'corrected_value': corrected_val,
-                            'explanation': justification,
-                            'corrected_by': enum_id,
-                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        })
-                        st.success("Correction saved locally!")
-                        st.rerun()
-
-# ============================================================================
-# EXPORT DATA COMPILING LAYER
-# ============================================================================
-st.write("---")
-st.subheader("📥 Export Cleaned Dataset Logs")
-
-if st.session_state.corrections_list:
-    export_df = pd.DataFrame(st.session_state.corrections_list)
-    st.dataframe(export_df, use_container_width=True)
-    
-    csv_buffer = io.StringIO()
-    export_df.to_csv(csv_buffer, index=False)
-    
-    st.download_button(
-        label="Download Corrections CSV File",
-        data=csv_buffer.getvalue(),
-        file_name=f"corrections_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv"
-    )
-else:
-    st.info("No corrections have been submitted in this browser session yet.")
+                justification = st.text_area("Justification Notes/Explanation", key=f"notes_{iss['key']}", placeholder="
