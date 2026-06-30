@@ -14,7 +14,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
     menu_items={
-        'About': "HFC Data Correction App v2.0"
+        'About': "HFC Data Correction App v2.5"
     }
 )
 
@@ -26,8 +26,8 @@ SOURCE_FILE = "Constriantt.csv"
 LOGIC_FILE = "logic.csv"
 OUTPUT_FILE = "corrections_papaya.csv"
 
-# Fetch token safely from Streamlit Secrets or environment variables
-GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+# Safe fetch from Streamlit Secrets
+IF_TOKEN_EXISTS = st.secrets.get("GITHUB_TOKEN", "")
 
 # ============================================================================
 # STYLING - Mobile-First Design
@@ -148,6 +148,8 @@ if 'is_authenticated' not in st.session_state:
     st.session_state.is_authenticated = False
 if 'selected_enumerator' not in st.session_state:
     st.session_state.selected_enumerator = None
+if 'active_token' not in st.session_state:
+    st.session_state.active_token = IF_TOKEN_EXISTS
 
 # ============================================================================
 # GITHUB API INTEGRATION HELPERS
@@ -210,37 +212,46 @@ st.title("🛠️ HFC Data Correction App")
 if st.session_state.constraints_df is None:
     st.subheader("📋 Step 1: Connect & Fetch Source Files")
     
-    if not GITHUB_TOKEN:
-        st.warning("⚠️ GitHub Access Token is missing from Streamlit Secrets.")
-        input_token = st.text_input("Enter GitHub Personal Access Token (PAT):", type="password")
-        if input_token:
-            GITHUB_TOKEN = input_token
+    # Render interactive input box if the token background environment check failed
+    if not st.session_state.active_token:
+        st.warning("⚠️ GitHub Access Token is missing or was not picked up by Streamlit Cloud Secrets.")
+        manual_token = st.text_input("Paste your GitHub Personal Access Token (PAT) here directly:", type="password")
+        if manual_token:
+            st.session_state.active_token = manual_token.strip()
+    else:
+        st.success("🔒 An access token is configured! Ready to attempt data stream synchronization.")
+        if st.checkbox("Need to use a different token override?"):
+            override_token = st.text_input("Enter alternative GitHub Token:", type="password")
+            if override_token:
+                st.session_state.active_token = override_token.strip()
 
     if st.button("🚀 Pull Source Files From GitHub"):
-        if not GITHUB_TOKEN:
-            st.error("Cannot fetch repository files without a valid GitHub Access Token.")
+        if not st.session_state.active_token:
+            st.error("Cannot query the repository endpoint until a token text string is added.")
         else:
-            with st.spinner("Fetching dynamic dataset configurations..."):
+            with st.spinner("Connecting securely to your private repository..."):
                 # 1. Fetch Constraints File
-                fetched_constraints = fetch_file_from_github(GITHUB_REPO, SOURCE_FILE, GITHUB_TOKEN)
+                fetched_constraints = fetch_file_from_github(GITHUB_REPO, SOURCE_FILE, st.session_state.active_token)
                 
                 if fetched_constraints is not None:
                     st.session_state.constraints_df = fetched_constraints
                     
-                    # 2. Fetch Logic File (Smoothly falls back to empty if not present)
-                    fetched_logic = fetch_file_from_github(GITHUB_REPO, LOGIC_FILE, GITHUB_TOKEN)
+                    # 2. Fetch Logic File (Falls back cleanly if it's missing)
+                    fetched_logic = fetch_file_from_github(GITHUB_REPO, LOGIC_FILE, st.session_state.active_token)
                     if fetched_logic is not None:
                         st.session_state.logic_df = fetched_logic
-                        st.success(f"Successfully pulled {SOURCE_FILE} and {LOGIC_FILE}!")
+                        st.success(f"Successfully loaded data profiles from {SOURCE_FILE} and {LOGIC_FILE}!")
                     else:
                         st.session_state.logic_df = pd.DataFrame()
-                        st.success(f"Successfully pulled fresh data structure from {SOURCE_FILE}!")
+                        st.success(f"Successfully loaded data profiles from {SOURCE_FILE}!")
                     
                     st.rerun()
+                else:
+                    st.error("💡 Error 401 troubleshooting: Check that your token is valid, hasn't expired, and has the 'repo' scope checkbox selected on GitHub.")
 
     st.write("---")
-    st.info("💡 Alternatively, you can drop a temporary local file below to override style:")
-    c_file = st.file_uploader("Upload Backup Constraints CSV (Local Mirror)", type=["csv"])
+    st.info("💡 Alternative: Bypass GitHub entirely and drop your tracking sheets manually right here:")
+    c_file = st.file_uploader("Upload Backup Constraints CSV File", type=["csv"])
     if c_file:
         st.session_state.constraints_df = pd.read_csv(c_file)
         st.session_state.logic_df = pd.DataFrame()
@@ -293,6 +304,7 @@ if not st.session_state.is_authenticated:
     if st.button("🗑️ Reset Application / Upload New Files"):
         st.session_state.constraints_df = None
         st.session_state.logic_df = None
+        st.session_state.active_token = IF_TOKEN_EXISTS
         st.rerun()
     st.stop()
 
@@ -431,14 +443,14 @@ if st.session_state.corrections_list:
     st.dataframe(export_df, use_container_width=True)
     
     if st.button("☁️ Commit Corrections Directly to GitHub"):
-        if not GITHUB_TOKEN:
-            st.error("Missing personal token. Setup access permission variables first.")
+        if not st.session_state.active_token:
+            st.error("Missing repository communication scopes. Setup security credentials.")
         else:
             with st.spinner(f"Pushing changes securely back to {OUTPUT_FILE}..."):
                 success = commit_file_to_github(
                     repo=GITHUB_REPO,
                     filepath=OUTPUT_FILE,
-                    token=GITHUB_TOKEN,
+                    token=st.session_state.active_token,
                     df=export_df,
                     commit_message=f"Automated log adjustments by {enum_id} on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 )
@@ -449,4 +461,11 @@ if st.session_state.corrections_list:
 
     csv_buffer = io.StringIO()
     export_df.to_csv(csv_buffer, index=False)
-    st
+    st.download_button(
+        label="Download Corrections CSV File (Local Backup)",
+        data=csv_buffer.getvalue(),
+        file_name=f"corrections_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv"
+    )
+else:
+    st.info("No corrections have been submitted in this browser session yet.")
