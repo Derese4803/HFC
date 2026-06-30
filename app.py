@@ -1,28 +1,20 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import io
 import requests
 import base64
-from typing import Tuple, Optional, Dict, List
+import io
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="HFC Correction Dashboard", layout="wide")
 
 GITHUB_OWNER = "Derese4803"
 GITHUB_REPO = "HFC"
-ENUMERATOR_PASSWORD = "1234"
-ADMIN_PASSWORD = "admin_papaya_2026"
-VALID_ENUMERATORS = ["asfaw.m", "henok", "asfaw.f", "abreham", "tigist.p"]
-
-# --- INITIALIZATION ---
-if 'authenticated' not in st.session_state: st.session_state.authenticated = False
-if 'all_corrections_data' not in st.session_state: st.session_state.all_corrections_data = {}
+# Ensure your token is in .streamlit/secrets.toml
+GITHUB_TOKEN = st.secrets["github"]["token"]
 
 # --- GITHUB UTILS ---
 def get_headers():
-    token = st.secrets.get("github", {}).get("token")
-    return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    return {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
 def fetch_file(filename):
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}"
@@ -30,61 +22,50 @@ def fetch_file(filename):
     if res.status_code == 200:
         content = base64.b64decode(res.json()['content']).decode('utf-8')
         return pd.read_csv(io.StringIO(content))
-    return None
+    else:
+        st.error(f"Error {res.status_code}: Could not fetch {filename}")
+        return None
 
-# --- UI & LOGIC ---
-def login_screen():
+# --- INITIALIZATION ---
+if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+
+# --- AUTHENTICATION ---
+def login():
     st.title("🔐 HFC Correction Dashboard")
-    tab1, tab2 = st.tabs(["👤 Enumerator Login", "👑 Admin Login"])
-    with tab1:
-        user = st.selectbox("Select Username", VALID_ENUMERATORS)
-        if st.text_input("Password", type="password") == ENUMERATOR_PASSWORD:
-            if st.button("Login as Enumerator"):
-                st.session_state.update({'authenticated': True, 'role': 'enumerator', 'user': user})
-                st.rerun()
-    with tab2:
-        if st.text_input("Admin Password", type="password") == ADMIN_PASSWORD:
-            if st.button("Login as Admin"):
-                st.session_state.update({'authenticated': True, 'role': 'admin', 'user': 'Administrator'})
-                st.rerun()
+    user = st.text_input("Username")
+    pw = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if pw == "1234": # Add your logic here
+            st.session_state.authenticated = True
+            st.session_state.user = user
+            st.rerun()
 
+# --- MAIN APP ---
 def main():
     if not st.session_state.authenticated:
-        login_screen()
+        login()
         return
 
     st.title("🛠️ HFC Correction Dashboard")
     
-    # Data Loading
-    if 'data' not in st.session_state:
-        with st.spinner("Fetching data from secure repository..."):
-            st.session_state.data = fetch_file("constraints_papaya.csv")
-    
-    # Sidebar
-    with st.sidebar:
-        st.write(f"Logged in as: **{st.session_state.user}**")
-        if st.button("Logout"):
-            st.session_state.authenticated = False
-            st.rerun()
-        st.divider()
-        st.header("💾 Download Data")
-        if st.button("Export Corrections"):
-            st.download_button("Download CSV", pd.DataFrame(st.session_state.all_corrections_data).to_csv(), "report.csv")
+    # Load Data
+    if 'data_constraints' not in st.session_state:
+        with st.spinner("Fetching data..."):
+            st.session_state.data_constraints = fetch_file("Constraintt.csv")
+            st.session_state.data_logic = fetch_file("Logicc.csv")
 
-    # Tabs
-    t1, t2, t3 = st.tabs(["📋 Pending Tasks", "👥 Statistics", "🎯 Error Overview"])
+    # App Logic
+    tab1, tab2 = st.tabs(["📋 Tasks", "📊 Statistics"])
     
-    with t1:
-        st.write("Processing pending corrections for:", st.session_state.user)
-        # Add your task iteration logic here
+    with tab1:
+        if st.session_state.data_constraints is not None:
+            st.write("Pending Constraints:")
+            st.dataframe(st.session_state.data_constraints)
         
-    with t2:
-        st.header("👥 Enumerator & Overall Statistics")
-        st.success("Enumerators without errors: All clear!")
-        
-    with t3:
-        st.header("🎯 Error Type Overview")
-        st.subheader("📊 High Frequency Check Summary")
+    with tab2:
+        if st.session_state.data_logic is not None:
+            st.write("System Logic Report:")
+            st.dataframe(st.session_state.data_logic)
 
 if __name__ == "__main__":
     main()
