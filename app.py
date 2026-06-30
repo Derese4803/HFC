@@ -34,6 +34,15 @@ CONSTRAINTS_FILE = "constraints_papaya.csv"
 LOGIC_FILE = "logic_papaya.csv"
 CORRECTIONS_FILE = "corrections_papaya.csv"
 
+# ========== DEFAULT ENUMERATORS (Fallback if GitHub Fetch Fails) ==========
+DEFAULT_ENUMERATORS = [
+    "asfaw.m",
+    "henok",
+    "asfaw.f",
+    "abreham",
+    "tigist.p"
+]
+
 # ============================================================================
 # STYLING - Mobile-First Design
 # ============================================================================
@@ -190,11 +199,11 @@ initialize_session_state()
 # GITHUB API FUNCTIONS
 # ============================================================================
 
-def get_github_headers() -> Dict[str, str]:
-    """Get GitHub API headers with authentication"""
+def get_github_headers() -> Optional[Dict[str, str]]:
+    """Get GitHub API headers with authentication if secrets are configured"""
     token = st.secrets.get("github", {}).get("token")
     if not token:
-        raise ValueError("GitHub token not configured in secrets")
+        return None
     
     return {
         "Authorization": f"token {token}",
@@ -202,31 +211,27 @@ def get_github_headers() -> Dict[str, str]:
     }
 
 def fetch_file_from_github(filename: str) -> Optional[pd.DataFrame]:
-    """Fetch and parse CSV file from GitHub"""
-    try:
-        headers = get_github_headers()
-        url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}"
+    """Fetch and parse CSV file from GitHub with token fallback protection"""
+    headers = get_github_headers()
+    if not headers:
+        return None
         
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}"
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 404:
-            # Return blank DataFrame if corrections file doesn't exist yet
             if filename == CORRECTIONS_FILE:
                 return pd.DataFrame()
             return None
         elif response.status_code != 200:
-            st.error(f"Failed to load {filename}: {response.status_code}")
             return None
         
         content = base64.b64decode(response.json()['content']).decode('utf-8')
         df = pd.read_csv(io.StringIO(content))
         return df
         
-    except requests.exceptions.Timeout:
-        st.error(f"⏱️ Timeout loading {filename}. Please check your connection.")
-        return None
-    except Exception as e:
-        st.error(f"Error loading {filename}: {str(e)}")
+    except Exception:
         return None
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -234,10 +239,6 @@ def load_data_from_github() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFra
     """Load constraints and logic data from GitHub with caching"""
     constraints_df = fetch_file_from_github(CONSTRAINTS_FILE)
     logic_df = fetch_file_from_github(LOGIC_FILE)
-    
-    if constraints_df is not None or logic_df is not None:
-        st.success("✅ Data assets loaded from secure repository")
-    
     return constraints_df, logic_df
 
 def load_existing_corrections() -> Optional[pd.DataFrame]:
@@ -246,10 +247,13 @@ def load_existing_corrections() -> Optional[pd.DataFrame]:
 
 def save_corrections_to_github(corrections_df: pd.DataFrame) -> bool:
     """Save or append corrections to GitHub"""
-    try:
-        headers = get_github_headers()
-        corrections_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{CORRECTIONS_FILE}"
+    headers = get_github_headers()
+    if not headers:
+        st.error("Missing GitHub Token configuration.")
+        return False
         
+    try:
+        corrections_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{CORRECTIONS_FILE}"
         response = requests.get(corrections_url, headers=headers)
         sha = None
         
@@ -278,27 +282,13 @@ def save_corrections_to_github(corrections_df: pd.DataFrame) -> bool:
         st.error(f"Error saving to GitHub: {str(e)}")
         return False
 
-def check_token_validity() -> bool:
-    """Verify GitHub token is valid"""
-    try:
-        headers = get_github_headers()
-        response = requests.get("https://api.github.com/user", headers=headers, timeout=5)
-        if response.status_code == 401:
-            st.error("🔐 Access token expired. Please contact administrator.")
-            return False
-        return True
-    except:
-        return False
-
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
 def get_unique_id_column(df: pd.DataFrame) -> str:
-    """Find the unique ID column name in the dataframe"""
     if df is None or len(df) == 0:
         return 'unique_id'
-    
     possible_names = ['unique_id', 'Unique_id', 'number', 'id', 'ID', 'farmer_id']
     for col_name in possible_names:
         if col_name in df.columns:
@@ -306,7 +296,6 @@ def get_unique_id_column(df: pd.DataFrame) -> str:
     return df.columns[0]
 
 def get_farmer_name_column(df: pd.DataFrame) -> Optional[str]:
-    """Find the farmer name column in the dataframe"""
     if df is None or len(df) == 0:
         return None
     possible_names = ['respondent_name', 'farmer_name', 'resp_name', 'name']
@@ -316,7 +305,6 @@ def get_farmer_name_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 def get_phone_column(df: pd.DataFrame) -> Optional[str]:
-    """Find the phone number column in the dataframe"""
     if df is None or len(df) == 0:
         return None
     possible_names = ['phone_no', 'phone', 'telephone', 'mobile']
@@ -326,7 +314,6 @@ def get_phone_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 def get_reason_column(df: pd.DataFrame) -> Optional[str]:
-    """Find the reason/constraint column in the dataframe"""
     if df is None or len(df) == 0:
         return None
     possible_names = ['constraint', 'reason', 'rule', 'error_message']
@@ -336,11 +323,9 @@ def get_reason_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 def get_location_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
-    """Find location columns (woreda, kebele, village) in the dataframe"""
     location_cols = {'woreda': None, 'kebele': None, 'village': None}
     if df is None or len(df) == 0:
         return location_cols
-    
     for col in df.columns:
         if 'woreda' in col.lower() or 'district' in col.lower():
             location_cols['woreda'] = col
@@ -348,11 +333,9 @@ def get_location_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
             location_cols['kebele'] = col
         elif 'village' in col.lower() or 'gote' in col.lower():
             location_cols['village'] = col
-            
     return location_cols
 
 def format_display_value(value) -> str:
-    """Format a value for display, handling None, NaN, and special values"""
     if value is None or pd.isna(value):
         return 'N/A'
     str_val = str(value).strip()
@@ -360,29 +343,7 @@ def format_display_value(value) -> str:
         return 'N/A'
     return str_val
 
-# ============================================================================
-# DATA PROCESSING FUNCTIONS
-# ============================================================================
-
-def extract_constraint_limits(constraint_text: str) -> Tuple[int, int]:
-    """Extract min/max values from constraint text for display purposes only"""
-    min_val, max_val = 0, 100000
-    try:
-        constraint_lower = str(constraint_text).lower()
-        numbers = [int(s) for s in re.findall(r'\d+', constraint_text)]
-        if 'max' in constraint_lower and numbers:
-            max_val = numbers[-1]
-        if 'min' in constraint_lower and numbers:
-            min_val = numbers[-1]
-        if 'between' in constraint_lower and len(numbers) >= 2:
-            min_val = numbers[0]
-            max_val = numbers[1]
-    except:
-        pass
-    return min_val, max_val
-
 def get_corrected_error_keys(enumerator: str) -> set:
-    """Get set of already corrected error keys for this enumerator"""
     existing_corrections = load_existing_corrections()
     if existing_corrections is None or len(existing_corrections) == 0:
         return set()
@@ -396,7 +357,6 @@ def get_corrected_error_keys(enumerator: str) -> set:
         if 'unique_id' in row and 'variable' in row and 'error_type' in row:
             error_key = f"{row['error_type']}_{row['unique_id']}_{row['variable']}"
             corrected_keys.add(error_key)
-            
     return corrected_keys
 
 # ============================================================================
@@ -404,7 +364,6 @@ def get_corrected_error_keys(enumerator: str) -> set:
 # ============================================================================
 
 def render_progress_bar(current: int, total: int):
-    """Render a visual progress bar"""
     percentage = (current / total * 100) if total > 0 else 0
     st.markdown(f"""
         <div class="progress-bar">
@@ -416,7 +375,6 @@ def render_progress_bar(current: int, total: int):
     """, unsafe_allow_html=True)
 
 def render_metric_card(label: str, value: str, icon: str = "📊"):
-    """Render an attractive metric card"""
     st.markdown(f"""
         <div class="metric-card">
             <div style="font-size: 32px; margin-bottom: 8px;">{icon}</div>
@@ -426,7 +384,6 @@ def render_metric_card(label: str, value: str, icon: str = "📊"):
     """, unsafe_allow_html=True)
 
 def render_farmer_header(farmer_name: str, phone_no: str, woreda: str, kebele: str, village: str, error_count: int, completed_count: int = 0):
-    """Render farmer information header with location details"""
     if completed_count > 0:
         badge = f'<span class="success-badge">{completed_count} ready</span> <span class="error-badge">{error_count - completed_count} pending</span>'
     else:
@@ -468,16 +425,25 @@ def render_farmer_header(farmer_name: str, phone_no: str, woreda: str, kebele: s
 # MAIN APP ROUTER LOGIC
 # ============================================================================
 
-# Fetch core configuration datasets
+# Safety Check: Is GitHub configured?
+if not get_github_headers():
+    st.title("🔑 Initial Core Configuration Setup Required")
+    st.error("GitHub Security Token is missing or not configured in your Streamlit secrets environment.")
+    st.info("💡 **How to resolve this:**\n1. Go to your **Streamlit Cloud Dashboard**.\n2. Click settings on your active application instance -> **Secrets**.\n3. Add your token block configuration explicitly format like below:\n"
+            "```toml\n[github]\ntoken = \"your_github_personal_access_token_here\"\n```")
+    st.stop()
+
+# Fetch baseline core operational files
 constraints_df, logic_df = load_data_from_github()
 
-# Collect actual unique users inside your asset spreadsheets
+# Aggregate list of validation identities
 all_users = set()
 if constraints_df is not None and 'username' in constraints_df.columns:
     all_users.update(constraints_df['username'].dropna().unique())
 if logic_df is not None and 'username' in logic_df.columns:
     all_users.update(logic_df['username'].dropna().unique())
-VALID_ENUMERATORS = sorted(list(all_users)) if all_users else VALID_ENUMERATORS
+
+VALID_ENUMERATORS = sorted(list(all_users)) if all_users else DEFAULT_ENUMERATORS
 
 # LOGIN INTERFACE
 if not st.session_state.is_authenticated:
@@ -503,7 +469,6 @@ if not st.session_state.is_authenticated:
                 if user_input.lower().strip() in [u.lower().strip() for u in VALID_ENUMERATORS] and pass_input == ENUMERATOR_PASSWORD:
                     st.session_state.is_authenticated = True
                     st.session_state.is_admin = False
-                    # Preserve standard string matching alignment
                     matched_enum = [u for u in VALID_ENUMERATORS if u.lower().strip() == user_input.lower().strip()][0]
                     st.session_state.selected_enumerator = matched_enum
                     st.success(f"Profile `{matched_enum}` Authenticated.")
@@ -528,7 +493,6 @@ if st.session_state.is_admin:
         st.session_state.is_admin = False
         st.rerun()
         
-    # Read global history trace log
     master_trace_df = load_existing_corrections()
     
     col1, col2 = st.columns(2)
@@ -565,20 +529,18 @@ if st.button("🚪 Logout Account"):
     st.session_state.corrected_errors = set()
     st.rerun()
 
-# Filter active user records from global matrices
+# Data filter assignment layer
 c_user = constraints_df[constraints_df['username'].astype(str).str.lower().str.strip() == enum_id.lower().strip()].copy() if constraints_df is not None else pd.DataFrame()
 l_user = logic_df[logic_df['username'].astype(str).str.lower().str.strip() == enum_id.lower().strip()].copy() if logic_df is not None else pd.DataFrame()
 
 id_c_col = get_unique_id_column(c_user)
 id_l_col = get_unique_id_column(l_user)
 
-# Identify downstream targets that have been fixed on the remote server
 preexisting_completed_keys = get_corrected_error_keys(enum_id)
 
-# Render User Forms UI Loops
 combined_farmers_index = {}
 
-# Process Constraints
+# Match Constraint Records
 for idx, row in c_user.iterrows():
     f_id = str(row[id_c_col])
     ekey = f"constraint_{f_id}_{row['variable']}"
@@ -588,7 +550,7 @@ for idx, row in c_user.iterrows():
         combined_farmers_index[f_id] = {'meta': row, 'issues': []}
     combined_farmers_index[f_id]['issues'].append({'type': 'constraint', 'data': row, 'key': ekey, 'id_col': id_c_col})
 
-# Process Logic Mismatches
+# Match Logic Records
 for idx, row in l_user.iterrows():
     f_id = str(row[id_l_col])
     ekey = f"logic_{f_id}_{row['variable']}"
@@ -605,16 +567,14 @@ if total_backlog_items == 0:
     st.success("🎉 Outstanding job! All data issues associated with your profile are completely resolved.")
     st.stop()
 
-# Progress Dashboard Status Tracker
 active_done = len(st.session_state.corrected_errors)
 render_progress_bar(active_done, total_backlog_items)
 
-# Display Farmer Issues Grouped by Cards
+# Layout Expansion Loop
 for f_id, context in combined_farmers_index.items():
     meta = context['meta']
     issues = context['issues']
     
-    # Skip if this whole card was verified during the session run
     if all(iss['key'] in st.session_state.corrected_errors for iss in issues):
         continue
         
@@ -662,7 +622,6 @@ for f_id, context in combined_farmers_index.items():
                         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     }
                     
-                    # Package and commit straight to GitHub Cloud Server
                     save_success = save_corrections_to_github(pd.DataFrame([new_log_row]))
                     if save_success:
                         st.session_state.corrected_errors.add(iss['key'])
