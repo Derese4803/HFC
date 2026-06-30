@@ -1,602 +1,294 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import os
 from datetime import datetime
-import io
-import re
-import requests
-import base64
-from typing import Tuple, Optional, List, Dict
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
+# 🎨 PAGE CONFIGURATION
 st.set_page_config(
-    page_title="HFC Data Correction",
+    page_title="HFC Field-Data Correction System",
+    page_icon="🛠️",
     layout="wide",
-    initial_sidebar_state="expanded",  
-    menu_items={
-        'About': "HFC Data Correction System v2.5"
-    }
+    initial_sidebar_state="expanded"
 )
 
-# Constants
-GITHUB_OWNER = "mohammed-seid"
-GITHUB_REPO = "hfc-data-private"
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin123"
-CACHE_TTL = 3600  # 1 hour
+# 🔄 INITIALIZE SESSION STATES FOR STORAGE
+if "corrected_errors" not in st.session_state:
+    st.session_state.corrected_errors = set()
+if "master_log" not in st.session_state:
+    st.session_state.master_log = []
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
 
-# ============================================================================
-# STYLING - Mobile-First Design
-# ============================================================================
-
-st.markdown("""
-    <style>
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        height: 50px;
-        font-size: 16px;
-        font-weight: 600;
-    }
+# 🔐 SIDEBAR: AUTHENTICATION & MANAGEMENT
+with st.sidebar:
+    st.title("⚙️ System Control Panel")
+    st.markdown("---")
     
-    .stExpander {
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        margin-bottom: 12px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    
-    .farmer-card {
-        background: #f8f9fa;
-        padding: 12px;
-        border-radius: 8px;
-        margin-bottom: 8px;
-        border-left: 4px solid #4CAF50;
-    }
-    
-    .error-badge {
-        background: #ff6b6b;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 600;
-    }
-    
-    .success-badge {
-        background: #51cf66;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 600;
-    }
-    
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 12px;
-        color: white;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    
-    @media (max-width: 768px) {
-        .stTextInput, .stNumberInput, .stTextArea {
-            margin-bottom: 16px;
-        }
-        
-        .stMetric {
-            padding: 12px;
-        }
-    }
-    
-    .progress-bar {
-        height: 8px;
-        background: #e0e0e0;
-        border-radius: 4px;
-        overflow: hidden;
-        margin: 16px 0;
-    }
-    
-    .progress-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #4CAF50, #8BC34A);
-        transition: width 0.3s ease;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# ============================================================================
-# SESSION STATE INITIALIZATION
-# ============================================================================
-
-def initialize_session_state():
-    """Initialize all session state variables"""
-    defaults = {
-        'corrected_errors': set(),
-        'all_corrections_data': {},
-        'is_admin': False,
-        'selected_enumerator': None,
-        'show_completed': False,
-        'filter_error_type': 'All',
-        'local_corrections': pd.DataFrame(columns=[
-            'error_type', 'unique_id', 'variable', 'correct_value', 
-            'explanation', 'corrected_by', 'timestamp'
-        ])
-    }
-    
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-initialize_session_state()
-
-# ============================================================================
-# GITHUB API FUNCTIONS
-# ============================================================================
-
-def get_github_headers() -> Dict[str, str]:
-    """Get GitHub API headers with authentication"""
-    token = st.secrets.get("github", {}).get("token")
-    if not token:
-        raise ValueError("GitHub token not configured in secrets")
-    
-    return {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-
-def fetch_file_from_github(filename: str) -> Optional[pd.DataFrame]:
-    """Fetch and parse CSV file from GitHub"""
-    try:
-        headers = get_github_headers()
-        url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}"
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            return None
-        
-        content = base64.b64decode(response.json()['content']).decode('utf-8')
-        return pd.read_csv(io.StringIO(content))
-        
-    except requests.exceptions.Timeout:
-        st.error(f"⏱️ Timeout loading {filename}. Please check your connection.")
-        return None
-    except Exception as e:
-        return None
-
-@st.cache_data(ttl=CACHE_TTL)
-def load_data_from_github() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
-    """Load constraints and logic data from GitHub with caching"""
-    constraints_df = fetch_file_from_github("constraints.csv")
-    logic_df = fetch_file_from_github("logic.csv")
-    return constraints_df, logic_df
-
-def load_existing_corrections() -> Optional[pd.DataFrame]:
-    """Load existing corrections from GitHub (Cloud mode) or Local State (Manual mode)"""
-    if check_token_validity():
-        try:
-            headers = get_github_headers()
-            corrections_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/corrections.csv"
-            response = requests.get(corrections_url, headers=headers)
-            
-            if response.status_code == 200:
-                corrections_content = base64.b64decode(response.json()['content']).decode('utf-8')
-                return pd.read_csv(io.StringIO(corrections_content))
+    # Administrative Login
+    st.subheader("🔐 Authorization Check")
+    if not st.session_state.admin_logged_in:
+        admin_user = st.text_input("Admin Username", value="")
+        admin_pass = st.text_input("Admin Password", type="password", value="")
+        if st.button("Log In as Administrator"):
+            if admin_user == "admin" and admin_pass == "admin123":
+                st.session_state.admin_logged_in = True
+                st.success("Authorized! Executive metrics unlocked.")
+                st.rerun()
             else:
-                return st.session_state.local_corrections
-        except:
-            return st.session_state.local_corrections
+                st.error("Invalid credentials.")
     else:
-        return st.session_state.local_corrections
-
-def save_corrections_to_github(corrections_df: pd.DataFrame) -> bool:
-    """Save or append corrections to GitHub"""
-    try:
-        headers = get_github_headers()
-        corrections_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/corrections.csv"
-        
-        response = requests.get(corrections_url, headers=headers)
-        sha = None
-        
-        if response.status_code == 200:
-            sha = response.json()['sha']
-            existing_content = base64.b64decode(response.json()['content']).decode('utf-8')
-            existing_df = pd.read_csv(io.StringIO(existing_content))
-            corrections_df = pd.concat([existing_df, corrections_df], ignore_index=True)
-        
-        csv_data = corrections_df.to_csv(index=False)
-        encoded_data = base64.b64encode(csv_data.encode()).decode()
-        
-        payload = {
-            "message": f"Add corrections - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            "content": encoded_data,
-            "branch": "main"
-        }
-        
-        if sha:
-            payload["sha"] = sha
-            
-        response = requests.put(corrections_url, headers=headers, json=payload, timeout=10)
-        return response.status_code in [200, 201]
-        
-    except Exception as e:
-        st.error(f"Error saving to GitHub: {str(e)}")
-        return False
-
-def check_token_validity() -> bool:
-    """Verify GitHub token is valid"""
-    try:
-        headers = get_github_headers()
-        response = requests.get("https://api.github.com/user", headers=headers, timeout=5)
-        if response.status_code == 401:
-            return False
-        return True
-    except:
-        return False
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-def get_unique_id_column(df: pd.DataFrame) -> Optional[str]:
-    """Find the unique ID column name in the dataframe"""
-    if df is None or len(df) == 0:
-        return None
-    
-    possible_names = [
-        'unique_id', 'Unique_id', 'UNIQUE_ID', 'UniqueID', 'unique_ID',
-        'id', 'ID', 'farmer_id', 'Farmer_ID', 'farmerid'
-    ]
-    
-    for col_name in possible_names:
-        if col_name in df.columns:
-            return col_name
-    
-    for col in df.columns:
-        if 'id' in col.lower():
-            return col
-    
-    return None
-
-# ============================================================================
-# DATA PROCESSING FUNCTIONS
-# ============================================================================
-
-def extract_constraint_limits(constraint_text: str) -> Tuple[int, int]:
-    """Extract min/max values from constraint text for display purposes only"""
-    min_val, max_val = 0, 100000
-    try:
-        constraint_lower = str(constraint_text).lower()
-        numbers = re.findall(r'\d+', constraint_text)
-        if 'max' in constraint_lower and numbers:
-            max_val = int(numbers[-1])
-        if 'min' in constraint_lower and numbers:
-            min_val = int(numbers[-1])
-        if 'between' in constraint_lower and len(numbers) >= 2:
-            min_val = int(numbers[0])
-            max_val = int(numbers[1])
-    except:
-        pass
-    return min_val, max_val
-
-def get_corrected_error_keys(enumerator: str) -> set:
-    """Get set of already corrected error keys for this enumerator"""
-    existing_corrections = load_existing_corrections()
-    if existing_corrections is None or len(existing_corrections) == 0:
-        return set()
-    
-    enumerator_corrections = existing_corrections[existing_corrections['corrected_by'] == enumerator]
-    corrected_keys = set()
-    for _, row in enumerator_corrections.iterrows():
-        unique_id = None
-        if 'unique_id' in row:
-            unique_id = row['unique_id']
-        else:
-            for col in row.index:
-                if 'id' in col.lower() and col != 'error_type':
-                    unique_id = row[col]
-                    break
-        if unique_id:
-            error_key = f"{row['error_type']}_{unique_id}_{row['variable']}"
-            corrected_keys.add(error_key)
-    return corrected_keys
-
-def filter_uncorrected_errors(df: pd.DataFrame, error_type: str, enumerator: str) -> pd.DataFrame:
-    """Remove already corrected errors from dataframe"""
-    if df is None or len(df) == 0:
-        return pd.DataFrame()
-    
-    id_col = get_unique_id_column(df)
-    if id_col is None:
-        return pd.DataFrame()
-    
-    corrected_keys = get_corrected_error_keys(enumerator)
-    all_corrected = corrected_keys.union(st.session_state.corrected_errors)
-    
-    return df[~df.apply(
-        lambda x: f"{error_type}_{x[id_col]}_{x['variable']}" in all_corrected,
-        axis=1
-    )]
-
-def get_enumerator_statistics(constraints_df: pd.DataFrame, logic_df: pd.DataFrame) -> pd.DataFrame:
-    """Get detailed statistics for each enumerator"""
-    stats = []
-    all_enumerators = set()
-    if constraints_df is not None and len(constraints_df) > 0 and 'username' in constraints_df.columns:
-        all_enumerators.update(constraints_df['username'].unique())
-    if logic_df is not None and len(logic_df) > 0 and 'username' in logic_df.columns:
-        all_enumerators.update(logic_df['username'].unique())
-    
-    existing_corrections = load_existing_corrections()
-    
-    for enumerator in sorted(all_enumerators):
-        constraint_errors = len(constraints_df[constraints_df['username'] == enumerator]) if (constraints_df is not None and 'username' in constraints_df.columns) else 0
-        logic_errors = len(logic_df[logic_df['username'] == enumerator]) if (logic_df is not None and 'username' in logic_df.columns) else 0
-        total_errors = constraint_errors + logic_errors
-        
-        solved = len(existing_corrections[existing_corrections['corrected_by'] == enumerator]) if existing_corrections is not None else 0
-        remaining = total_errors - solved
-        percentage = (solved / total_errors * 100) if total_errors > 0 else 0
-        
-        stats.append({
-            'Username': enumerator,
-            'Total Errors': total_errors,
-            'Solved': solved,
-            'Remaining': remaining,
-            'Progress (%)': round(percentage, 1)
-        })
-    
-    return pd.DataFrame(stats).sort_values('Remaining', ascending=False) if stats else pd.DataFrame()
-
-# ============================================================================
-# UI RENDERING COMPONENTS
-# ============================================================================
-
-def render_farmer_header(farmer_name: str, phone_no: str, error_count: int, completed_count: int = 0):
-    badge = f'<span class="success-badge">{completed_count} ready</span> <span class="error-badge">{error_count-completed_count} pending</span>' if completed_count > 0 else f'<span class="error-badge">{error_count} issues</span>'
-    st.markdown(f"""
-        <div class="farmer-card">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <div style="font-size: 18px; font-weight: 600;">👨‍🌾 {farmer_name}</div>
-                    <div style="font-size: 14px; color: #666; margin-top: 4px;">📞 {phone_no}</div>
-                </div>
-                <div>{badge}</div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-def render_constraint_error(error: pd.Series, error_key: str, id_col: str):
-    st.markdown(f"### 🔒 {error['variable']}")
-    min_val, max_val = extract_constraint_limits(error['constraint'])
-    try: default_value = int(error['value'])
-    except: default_value = 0
-        
-    col1, col2 = st.columns([3, 2])
-    with col1:
-        st.info(f"**Current Value:** {error['value']}")
-        st.caption(f"**Rule:** {error['constraint']}")
-    with col2:
-        correct_value = st.number_input("Corrected Value", value=default_value, step=1, key=f"value_{error_key}")
-        
-    if correct_value < min_val or correct_value > max_val:
-        st.warning(f"⚠️ Value outside expected range ({min_val}-{max_val}).")
-        
-    explanation = st.text_area("📝 Explanation (Required)", key=f"explain_{error_key}", height=100, 
-                               placeholder="Why is this change necessary? What did the farmer clarify?")
-    
-    st.session_state.all_corrections_data[error_key] = {
-        'error_type': 'constraint', 'error_data': error, 'correct_value': correct_value,
-        'explanation': explanation, 'outside_range': correct_value < min_val or correct_value > max_val, 'id_column': id_col
-    }
-
-def render_logic_error(discrepancy: pd.Series, error_key: str, id_col: str):
-    st.markdown(f"### 📊 {discrepancy['variable']}")
-    try:
-        farmer_value = int(discrepancy['value'])
-        troster_value = int(discrepancy['Troster Value'])
-    except:
-        farmer_value, troster_value = 0, 0
-        
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Your Report", farmer_value)
-    col2.metric("System Record", troster_value)
-    col3.metric("Difference", farmer_value - troster_value)
-    
-    correct_value = st.number_input("Corrected Value", value=farmer_value, step=1, key=f"value_{error_key}")
-    explanation = st.text_area("📝 Explanation (Required)", key=f"explain_{error_key}", height=100, 
-                               placeholder="Why is there a conflict between your records and the system record?")
-    
-    st.session_state.all_corrections_data[error_key] = {
-        'error_type': 'logic', 'error_data': discrepancy, 'correct_value': correct_value,
-        'explanation': explanation, 'id_column': id_col
-    }
-
-# ============================================================================
-# MAIN APPLICATION ROUTER
-# ============================================================================
-
-def main():
-    st.title("🌾 HFC Structural Field-Data Correction System")
-    
-    constraints_df = None
-    logic_df = None
-    mode = "Cloud (GitHub)"
-
-    if check_token_validity():
-        constraints_df, logic_df = load_data_from_github()
-    
-    if constraints_df is None or logic_df is None:
-        mode = "Manual Local Upload"
-        st.sidebar.warning("⚠️ Using Local Upload Mode.")
-        
-        st.markdown("### 📥 Step 1: Upload Baseline System Datasets")
-        col1, col2 = st.columns(2)
-        with col1:
-            c_file = st.file_uploader("Upload constraints.csv File", type=["csv"], key="local_c_upload")
-            if c_file:
-                constraints_df = pd.read_csv(c_file)
-        with col2:
-            l_file = st.file_uploader("Upload logic.csv File", type=["csv"], key="local_l_upload")
-            if l_file:
-                logic_df = pd.read_csv(l_file)
-                
-        if constraints_df is None and logic_df is None:
-            st.info("💡 Drop your field dataset `.csv` log files into the uploaders above to populate your tracking dashboards.")
-            return
-
-    st.sidebar.markdown(f"**Active Data Mode:** `{mode}`")
-
-    st.sidebar.title("🔐 Authorization Check")
-    if not st.session_state.is_admin:
-        with st.sidebar.expander("Admin Login Dashboard"):
-            user = st.text_input("Username")
-            pas = st.text_input("Password", type="password")
-            if st.button("Log In"):
-                if user == ADMIN_USERNAME and pas == ADMIN_PASSWORD:
-                    st.session_state.is_admin = True
-                    st.rerun()
-                else: 
-                    st.error("Invalid credentials.")
-    else:
-        st.sidebar.success("Logged in as System Administrator")
-        if st.sidebar.button("Log Out"):
-            st.session_state.is_admin = False
+        st.success("🔓 Logged in as Administrator")
+        if st.button("Log Out"):
+            st.session_state.admin_logged_in = False
             st.rerun()
+            
+    st.markdown("---")
+    st.caption("HFC Field-Data Verification Utility • v2.1")
 
-    # ============================================================================
-    # ROUTE SCREEN: ADMIN DASHBOARD (WITH EXCEL DOWNLOAD BUTTON)
-    # ============================================================================
-    if st.session_state.is_admin:
-        st.subheader("📊 Executive System Metrics")
-        stats_df = get_enumerator_statistics(constraints_df, logic_df)
-        
-        if not stats_df.empty:
-            st.dataframe(stats_df, use_container_width=True, hide_index=True)
-            
-            st.markdown("---")
-            st.subheader("📥 Export System Diagnostics")
-            
-            export_df = load_existing_corrections()
-            
-            if export_df is not None and not export_df.empty:
-                csv_buffer = io.StringIO()
-                export_df.to_csv(csv_buffer, index=False)
-                csv_data = csv_buffer.getvalue()
-                
-                st.download_button(
-                    label="📥 Download Master Corrections Log (Excel/CSV)",
-                    data=csv_data,
-                    file_name=f"HFC_Master_Corrections_Report_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    key="download_excel_btn"
-                )
+
+# 📑 MAIN INTERFACE LAYER
+st.title("🛠️ HFC Structural Field-Data Correction System")
+st.markdown("Reconcile invalid constraints and system mismatches directly from field reports.")
+
+# Placeholders for dataframes
+constraints_df = None
+logic_df = None
+
+# 📥 STEP 1: DYNAMIC FILE UPLOADERS (Accepts CSV & XLSX)
+st.markdown("### 📥 Step 1: Upload Baseline System Datasets")
+st.info("💡 You can upload Excel files (.xlsx) or CSV files (.csv). You may use both files, or just one depending on your audit focus.")
+
+col1, col2 = st.columns(2)
+with col1:
+    c_file = st.file_uploader("Upload constraints File (Range/Data Types)", type=["csv", "xlsx"], key="local_c_upload")
+    if c_file:
+        try:
+            if c_file.name.endswith('.xlsx'):
+                constraints_df = pd.read_excel(c_file)
             else:
-                st.warning("No corrections data available yet to download.")
-        else:
-            st.info("No tracking metrics are currently logged across your system data feeds.")
-        return
+                constraints_df = pd.read_csv(c_file)
+            st.success(f"Loaded {len(constraints_df)} rows from constraints file.")
+        except Exception as e:
+            st.error(f"Error parsing constraints file: {e}")
 
-    # ============================================================================
-    # ROUTE SCREEN: FIELD AGENT ENUMERATOR DASHBOARD
-    # ============================================================================
-    all_users = []
-    if constraints_df is not None and 'username' in constraints_df.columns:
-        all_users.extend(constraints_df['username'].dropna().unique())
-    if logic_df is not None and 'username' in logic_df.columns:
-        all_users.extend(logic_df['username'].dropna().unique())
-    all_users = sorted(list(set(all_users)))
+with col2:
+    l_file = st.file_uploader("Upload logic File (System Mismatches)", type=["csv", "xlsx"], key="local_l_upload")
+    if l_file:
+        try:
+            if l_file.name.endswith('.xlsx'):
+                logic_df = pd.read_excel(l_file)
+            else:
+                logic_df = pd.read_csv(l_file)
+            st.success(f"Loaded {len(logic_df)} rows from logic file.")
+        except Exception as e:
+            st.error(f"Error parsing logic file: {e}")
+
+# Halt if absolutely no files are provided yet
+if constraints_df is None and logic_df is None:
+    st.warning("👋 Please upload at least one dataset file above to unlock the enumerator dashboards.")
+    st.stop()
+
+
+# 🗂️ AGGREGATE ENUMERATORS FROM ALL ACTIVE FILES
+all_users = set()
+if constraints_df is not None and 'username' in constraints_df.columns:
+    all_users.update(constraints_df['username'].dropna().unique())
+if logic_df is not None and 'username' in logic_df.columns:
+    all_users.update(logic_df['username'].dropna().unique())
+
+sorted_enumerators = sorted(list(all_users))
+
+
+# 👥 STEP 2: ENUMERATOR SELECTION
+st.markdown("---")
+st.markdown("### 👥 Step 2: Select Your Enumerator Identifier Code")
+selected_enum = st.selectbox("Select Your Identifier:", ["-- Select ID --"] + sorted_enumerators)
+
+if selected_enum == "-- Select ID --":
+    st.info("👈 Please select your enumerator username from the drop-down menu to view assignments.")
+    st.stop()
+
+
+# 🔍 FILTER THE DATA PATTERNS PER USER
+user_constraints = pd.DataFrame()
+user_logic = pd.DataFrame()
+
+# Robust string cleaning (lowercasing & stripping trailing white spaces) to eliminate mismatch issues
+if constraints_df is not None and 'username' in constraints_df.columns:
+    user_constraints = constraints_df[constraints_df['username'].astype(str).str.lower().str.strip() == selected_enum.lower().strip()]
+
+if logic_df is not None and 'username' in logic_df.columns:
+    user_logic = logic_df[logic_df['username'].astype(str).str.lower().str.strip() == selected_enum.lower().strip()]
+
+total_pending = len(user_constraints) + len(user_logic)
+
+# Check for completed tasks within current runtime context
+completed_count = 0
+for idx, row in user_constraints.iterrows():
+    if f"c_{idx}" in st.session_state.corrected_errors:
+        completed_count += 1
+for idx, row in user_logic.iterrows():
+    if f"l_{idx}" in st.session_state.corrected_errors:
+        completed_count += 1
+
+remaining_tasks = total_pending - completed_count
+
+# Welcome Banner
+st.markdown(f"#### 📋 Profile Active Backlog for: `{selected_enum}`")
+if remaining_tasks == 0:
+    st.balloons()
+    st.success("🎉 All clear! No pending verification tasks are currently assigned to this profile.")
+else:
+    st.warning(f"⏳ You have **{remaining_tasks}** records requiring active data corrections or justifications.")
+
+
+# 🛠️ STEP 3 & 4: PROCESSING WORKFLOW LAYER
+if remaining_tasks > 0:
+    st.markdown("---")
+    st.markdown("### 📝 Active Backlog Cards")
     
-    if not all_users:
-        st.error("Error: Could not extract valid 'username' values from the uploaded datasets.")
-        return
-
-    selected_enum = st.selectbox("Select Your Enumerator Identifier Code:", ["-- Select ID --"] + all_users)
-    if selected_enum == "-- Select ID --":
-        st.info("Please select your assigned username identifier from the drop-down menu to pull up your pending backlog.")
-        return
-
-    c_user = constraints_df[constraints_df['username'] == selected_enum] if (constraints_df is not None and 'username' in constraints_df.columns) else pd.DataFrame()
-    l_user = logic_df[logic_df['username'] == selected_enum] if (logic_df is not None and 'username' in logic_df.columns) else pd.DataFrame()
-    
-    c_pending = filter_uncorrected_errors(c_user, "constraint", selected_enum) if not c_user.empty else pd.DataFrame()
-    l_pending = filter_uncorrected_errors(l_user, "logic", selected_enum) if not l_user.empty else pd.DataFrame()
-
-    if c_pending.empty and l_pending.empty:
-        st.success("🎉 All clear! No pending verification tasks are assigned to this profile.")
-        return
-
-    id_col = get_unique_id_column(constraints_df) or get_unique_id_column(logic_df) or 'unique_id'
-    st.subheader("📋 Pending Data Verification Backlog")
-    
-    # Process Range Constraint Errors
-    if not c_pending.empty and id_col in c_pending.columns:
-        for idx, row in c_pending.iterrows():
-            key = f"constraint_{row[id_col]}_{row['variable']}"
-            with st.expander(f"❌ Range Constraint Error: ID {row[id_col]} ({row['variable']})"):
-                render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
-                render_constraint_error(row, key, id_col)
+    # Loop through Range Constraints
+    if not user_constraints.empty:
+        for idx, row in user_constraints.iterrows():
+            key = f"c_{idx}"
+            if key in st.session_state.corrected_errors:
+                continue
                 
-                if st.button("Commit Correction", key=f"btn_{key}"):
-                    data = st.session_state.all_corrections_data.get(key)
-                    if data and data['explanation'].strip():
-                        new_row = {
-                            'error_type': 'constraint', 'unique_id': str(row[id_col]), 'variable': row['variable'],
-                            'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
-                            'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        }
-                        
-                        if mode == "Cloud (GitHub)":
-                            if save_corrections_to_github(pd.DataFrame([new_row])):
-                                st.session_state.corrected_errors.add(key)
-                                st.success("Correction pushed to cloud repository!")
-                                st.rerun()
-                        else:
-                            st.session_state.local_corrections = pd.concat([
-                                st.session_state.local_corrections, pd.DataFrame([new_row])
-                            ], ignore_index=True)
-                            st.session_state.corrected_errors.add(key)
-                            st.success("Correction saved to local buffer storage! Log in as admin to download report.")
-                            st.rerun()
-                    else: 
-                        st.error("Justification explanation text comment field is strictly required.")
-
-    # Process System Reconciliation Logic Mismatches
-    if not l_pending.empty and id_col in l_pending.columns:
-        for idx, row in l_pending.iterrows():
-            key = f"logic_{row[id_col]}_{row['variable']}"
-            with st.expander(f"⚠️ System Mismatch Discrepancy: ID {row[id_col]} ({row['variable']})"):
-                render_farmer_header(row.get('farmer_name', 'N/A'), str(row.get('phone_number', 'N/A')), 1)
-                render_logic_error(row, key, id_col)
+            # Set up dynamic naming fields based on what columns exist in file
+            farmer_name = row.get('respondent_name', row.get('farmer_name', f"ID: {row.get('unique_id', idx)}"))
+            var_name = row.get('variable', 'Unknown Field')
+            current_val = row.get('value', 'N/A')
+            rule_constraint = row.get('constraint', 'No rule logic stated')
+            
+            with st.expander(f"❌ Range Constraint Error — Farmer: {farmer_name} ({var_name})"):
+                st.error(f"**Flagged System Rule Violation:** {rule_constraint}")
                 
-                if st.button("Commit Correction", key=f"btn_{key}"):
-                    data = st.session_state.all_corrections_data.get(key)
-                    if data and data['explanation'].strip():
+                col_m1, col_m2 = st.columns(2)
+                col_m1.metric(label="Current Value Entered", value=str(current_val))
+                col_m2.metric(label="Field Boundary Rule", value=str(rule_constraint))
+                
+                # Input Corrections Box
+                corr_val = st.text_input(f"Enter Corrected Value for {farmer_name}", key=f"input_c_v_{idx}")
+                justification = st.text_input(f"Explanation/Justification (Required)", key=f"input_c_j_{idx}")
+                
+                if st.button("Commit Correction", key=f"btn_c_{idx}"):
+                    if not corr_val or not justification:
+                        st.error("⚠️ You must fill in both the corrected value and an explicit structural explanation.")
+                    else:
+                        # Append changes directly into Memory Matrix State
                         new_row = {
-                            'error_type': 'logic', 'unique_id': str(row[id_col]), 'variable': row['variable'],
-                            'correct_value': data['correct_value'], 'explanation': data['explanation'].strip(),
-                            'corrected_by': selected_enum, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            'error_type': 'Range Constraint',
+                            'username': selected_enum,
+                            'unique_id': str(row.get('unique_id', row.get('number', idx))),
+                            'farmer_name': farmer_name,
+                            'variable': var_name,
+                            'original_value': current_val,
+                            'corrected_value': corr_val,
+                            'explanation': justification.strip(),
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         }
+                        st.session_state.master_log.append(new_row)
+                        st.session_state.corrected_errors.add(key)
                         
-                        if mode == "Cloud (GitHub)":
-                            if save_corrections_to_github(pd.DataFrame([new_row])):
-                                st.session_state.corrected_errors.add(key)
-                                st.success("Correction pushed to cloud repository!")
-                                st.rerun()
-                        else:
-                            st.session_state.local_corrections = pd.concat([
-                                st.session_state.local_corrections, pd.DataFrame([new_row])
-                            ], ignore_index=True)
-                            st.session_state.corrected_errors.add(key)
-                            st.success("Correction saved to local buffer storage!")
-                            st.rerun()
-                    else: 
-                        st.error("Justification explanation text comment field is strictly required.")
+                        # Offline Local Hard-drive Auto-save Dump (Prevents data loss if window closes)
+                        pd.DataFrame([new_row]).to_csv(
+                            'saved_corrections.csv', 
+                            mode='a', 
+                            header=not os.path.exists('saved_corrections.csv'), 
+                            index=False
+                        )
+                        st.success("💾 Correction logged and appended onto the hard drive file ('saved_corrections.csv')!")
+                        st.rerun()
 
-if __name__ == "__main__":
-    main()
+    # Loop through System Logic Mismatches
+    if not user_logic.empty:
+        for idx, row in user_logic.iterrows():
+            key = f"l_{idx}"
+            if key in st.session_state.corrected_errors:
+                continue
+                
+            farmer_name = row.get('respondent_name', row.get('farmer_name', f"ID: {row.get('unique_id', idx)}"))
+            var_name = row.get('variable', 'Unknown Mismatch')
+            current_val = row.get('value', 0)
+            troster_val = row.get('Troster Value', row.get('troster_value', 0))
+            
+            # Calculate mismatch delta automatically
+            try:
+                delta = float(current_val) - float(troster_val)
+            except:
+                delta = "N/A"
+                
+            with st.expander(f"⚠️ System Mismatch Discrepancy — Farmer: {farmer_name} ({var_name})"):
+                st.warning(f"**Discrepancy Warning:** Field Report does not align with core backend Baseline Values.")
+                
+                col_l1, col_l2, col_l3 = st.columns(3)
+                col_l1.metric(label="Your Field Report Value", value=str(current_val))
+                col_l2.metric(label="System Record (Troster Value)", value=str(troster_val))
+                col_l3.metric(label="Calculated Variance (Delta)", value=str(delta), delta=str(delta) if delta != "N/A" else None)
+                
+                corr_val = st.text_input(f"Enter Verified Core Value for {farmer_name}", key=f"input_l_v_{idx}")
+                justification = st.text_input(f"Explanation/Justification (Required)", key=f"input_l_j_{idx}")
+                
+                if st.button("Commit Correction", key=f"btn_l_{idx}"):
+                    if not corr_val or not justification:
+                        st.error("⚠️ You must fill in both the resolved metrics and a verification explanation.")
+                    else:
+                        new_row = {
+                            'error_type': 'System Mismatch (Logic)',
+                            'username': selected_enum,
+                            'unique_id': str(row.get('unique_id', row.get('number', idx))),
+                            'farmer_name': farmer_name,
+                            'variable': var_name,
+                            'original_value': f"Reported: {current_val} | Troster: {troster_val}",
+                            'corrected_value': corr_val,
+                            'explanation': justification.strip(),
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                        st.session_state.master_log.append(new_row)
+                        st.session_state.corrected_errors.add(key)
+                        
+                        # Offline Local Hard-drive Auto-save Dump 
+                        pd.DataFrame([new_row]).to_csv(
+                            'saved_corrections.csv', 
+                            mode='a', 
+                            header=not os.path.exists('saved_corrections.csv'), 
+                            index=False
+                        )
+                        st.success("💾 Variance correction logged and written to hard drive ('saved_corrections.csv')!")
+                        st.rerun()
+
+
+# 👑 STEP 5: EXECUTIVE VIEW & DOWNLOAD PANELS (ADMIN SECURED)
+st.markdown("---")
+st.markdown("### 📥 Step 5: Export System Diagnostics")
+
+if not st.session_state.admin_logged_in:
+    st.info("🔒 Administrative View Locked. Authenticate using the **System Control Panel** on the left sidebar to download logs.")
+else:
+    st.subheader("📊 Session Audit Performance Monitor")
+    
+    # Merges current active memory state array alongside history items logged directly onto local CSV
+    all_logged_corrections = []
+    if os.path.exists('saved_corrections.csv'):
+        try:
+            all_logged_corrections = pd.read_csv('saved_corrections.csv')
+        except:
+            all_logged_corrections = pd.DataFrame(st.session_state.master_log)
+    else:
+        all_logged_corrections = pd.DataFrame(st.session_state.master_log)
+        
+    if len(all_logged_corrections) == 0:
+        st.info("No logs found. Once agents start committing audited values, telemetry tables will display here.")
+    else:
+        st.metric(label="Total Completed Corrections (All-time Local)", value=len(all_logged_corrections))
+        st.dataframe(all_logged_corrections, use_container_width=True)
+        
+        # Download Action Engine Block (Outputs clean CSV structure)
+        csv_buffer = all_logged_corrections.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Master Corrections Log (CSV)",
+            data=csv_buffer,
+            file_name=f"HFC_Finalized_Data_Log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
