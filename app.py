@@ -27,10 +27,13 @@ ADMIN_PASSWORD = "admin123"
 ENUMERATOR_PASSWORD = "1234"
 CACHE_TTL = 3600  # 1 hour
 
-# ========== FILE NAMES (Match GitHub exactly) ==========
-CONSTRAINTS_FILE = "Constriantt.csv"
+# ========== FILE NAMES ==========
+CONSTRAINTS_FILE = "constraints_papaya.csv"
 LOGIC_FILE = "logic_papaya.csv"
 CORRECTIONS_FILE = "corrections_papaya.csv"
+
+# ========== DEFAULT ENUMERATORS ==========
+DEFAULT_ENUMERATORS = ["semayat.s", "amarech.d", "eyuel.u", "kiya.l"]
 
 # ============================================================================
 # STYLING - Mobile-First Design
@@ -98,5 +101,4 @@ st.markdown("""
         background: #51cf66;
         color: white;
         padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 12px;
+        border-radius: 1
