@@ -1,84 +1,68 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime
-import io
-import re
-import requests
-import base64
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="ET Papaya HFC System", layout="wide")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="ET Papaya HFC", layout="wide")
 
-# --- DATA LOAD & UTILS ---
-# (Include your helper functions: get_unique_id_column, get_farmer_name_column, etc. here)
-# ... [Insert your helper functions from previous step] ...
+# --- AUTH CONFIG ---
+USER_DB = {"asfaw.m": "1234", "henok": "1234", "asfaw.f": "1234", "abreham": "1234", "tigist.p": "1234"}
+ADMIN_PW = "admin_papaya_2026"
 
-def main():
-    # --- AUTHENTICATION ---
-    if not st.session_state.get('is_authenticated'):
-        st.markdown('<div class="login-box">', unsafe_allow_html=True)
-        user = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if user in VALID_ENUMERATORS and password == ENUMERATOR_PASSWORD:
-                st.session_state.is_authenticated = True
-                st.session_state.selected_enumerator = user
-                st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.stop()
+# --- STATE INITIALIZATION ---
+if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+if 'user' not in st.session_state: st.session_state.user = None
+if 'role' not in st.session_state: st.session_state.role = None
 
-    # --- MAIN APP UI ---
-    st.title("🌾 ET Papaya Data Correction")
+def login_screen():
+    st.title("🔐 ET Papaya HFC System")
     
-    # Load Data (with caching)
-    constraints_df, logic_df = load_data_from_github()
-    
-    # --- STATS DASHBOARD ---
-    stats_df = get_enumerator_statistics(constraints_df, logic_df)
-    current_enum_stats = stats_df[stats_df['Username'] == st.session_state.selected_enumerator]
-    
-    # Visual Progress Indicator
-    if not current_enum_stats.empty:
-        total = current_enum_stats['Total Errors'].iloc[0]
-        solved = current_enum_stats['Solved'].iloc[0]
-        render_progress_bar(solved, total)
+    with st.expander("📋 Instructions for Enumerators"):
+        st.write("1. Select your username from the dropdown.\n2. Enter your 4-digit PIN.\n3. Click 'Login' to view your assigned data tasks.")
 
-    # --- PENDING WORKSPACE ---
-    tab1, tab2 = st.tabs(["📝 Pending Tasks", "📊 My History"])
-    
+    tab1, tab2 = st.tabs(["👤 Enumerator Login", "👑 Admin Login"])
+
     with tab1:
-        # Filter logic to show only user's assigned errors
-        user_constraints = constraints_df[constraints_df['username'] == st.session_state.selected_enumerator]
-        
-        for idx, row in user_constraints.iterrows():
-            unique_id = row[get_unique_id_column(constraints_df)]
-            error_key = f"constraint_{unique_id}_{row['variable']}"
-            
-            # Use expander for mobile-friendly interface
-            with st.expander(f"Task: {unique_id} - {row['variable']}"):
-                render_farmer_header(
-                    row.get('farmer_name', 'Unknown'), 
-                    row.get('phone_no', 'N/A'),
-                    row.get('woreda', 'N/A'), row.get('kebele', 'N/A'), row.get('village', 'N/A'),
-                    error_count=1
-                )
-                render_constraint_error(row, error_key, get_unique_id_column(constraints_df))
-
-        if st.button("Submit All Corrections"):
-            is_valid, missing, comp, tot = validate_corrections()
-            if is_valid:
-                # Prepare and Save
-                corr_df = pd.DataFrame([v for v in st.session_state.all_corrections_data.values()])
-                if save_corrections_to_github(corr_df):
-                    st.success("Successfully pushed to GitHub!")
-            else:
-                st.error(f"Missing explanations for: {', '.join(missing)}")
+        user = st.selectbox("Select Username", list(USER_DB.keys()))
+        pw = st.text_input("Password", type="password", key="p1")
+        if st.button("Login as Enumerator"):
+            if pw == USER_DB.get(user):
+                st.session_state.authenticated = True
+                st.session_state.user = user
+                st.session_state.role = "enumerator"
+                st.rerun()
+            else: st.error("Incorrect PIN")
 
     with tab2:
-        st.subheader("Your Corrections")
-        # Display history from session state
-        if st.session_state.all_corrections_data:
-            st.write(pd.DataFrame([v for v in st.session_state.all_corrections_data.values()]))
+        pw_admin = st.text_input("Admin Password", type="password", key="p2")
+        if st.button("Login as Admin"):
+            if pw_admin == ADMIN_PW:
+                st.session_state.authenticated = True
+                st.session_state.user = "Administrator"
+                st.session_state.role = "admin"
+                st.rerun()
+            else: st.error("Invalid Admin Credentials")
+
+def main():
+    if not st.session_state.authenticated:
+        login_screen()
+        return
+
+    # Sidebar Logout
+    with st.sidebar:
+        st.write(f"Logged in as: **{st.session_state.user}**")
+        if st.button("Logout"):
+            st.session_state.authenticated = False
+            st.rerun()
+
+    # --- MAIN CONTENT ---
+    if st.session_state.role == "admin":
+        st.header("👑 Admin Dashboard")
+        st.write("Monitor overall progress and download reports here.")
+        # [Insert Admin Logic/Charts Here]
+        
+    else:
+        st.header(f"Welcome, {st.session_state.user}")
+        st.write("Below are your pending data corrections.")
+        # [Insert Enumerator Data Loop Here]
 
 if __name__ == "__main__":
     main()
