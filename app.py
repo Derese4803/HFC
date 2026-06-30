@@ -17,13 +17,14 @@ def get_headers():
     return {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
 def fetch_file(filename):
-    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}"
+    # Added ?ref=main to ensure the API looks at your main branch
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{filename}?ref=main"
     res = requests.get(url, headers=get_headers())
     if res.status_code == 200:
         content = base64.b64decode(res.json()['content']).decode('utf-8')
         return pd.read_csv(io.StringIO(content))
     else:
-        st.error(f"Error {res.status_code}: Could not fetch {filename}")
+        st.error(f"Error {res.status_code}: Could not fetch '{filename}'. Check if it is in the root directory.")
         return None
 
 # --- INITIALIZATION ---
@@ -35,7 +36,7 @@ def login():
     user = st.text_input("Username")
     pw = st.text_input("Password", type="password")
     if st.button("Login"):
-        if pw == "1234": # Add your logic here
+        if pw == "1234":
             st.session_state.authenticated = True
             st.session_state.user = user
             st.rerun()
@@ -48,10 +49,10 @@ def main():
 
     st.title("🛠️ HFC Correction Dashboard")
     
-    # Load Data
+    # Load Data using your specific filenames
     if 'data_constraints' not in st.session_state:
-        with st.spinner("Fetching data..."):
-            st.session_state.data_constraints = fetch_file("Constraintt.csv")
+        with st.spinner("Fetching data from Derese4803/HFC..."):
+            st.session_state.data_constraints = fetch_file("Constriantt.csv")
             st.session_state.data_logic = fetch_file("Logicc.csv")
 
     # App Logic
