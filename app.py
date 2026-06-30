@@ -22,11 +22,19 @@ def fetch_file(filename):
         return pd.read_csv(io.StringIO(content))
     return None
 
+# --- HELPER: AUTO-DETECT ID COLUMN ---
+def get_id_column(df):
+    possible_names = ['unique_id', 'id', 'farmer_id', 'ID', 'UUID', 'FarmerID']
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    return df.columns[0] # Default to first column
+
 # --- STATE ---
 if 'authenticated' not in st.session_state: st.session_state.authenticated = False
 if 'corrections' not in st.session_state: st.session_state.corrections = []
 
-# --- APP FUNCTIONS ---
+# --- MAIN APP ---
 def main():
     if not st.session_state.authenticated:
         st.title("🔐 HFC Login")
@@ -44,8 +52,8 @@ def main():
     st.title("🛠️ HFC Correction Dashboard")
     st.sidebar.write(f"User: **{st.session_state.user}**")
     
-    # Filter Data for Enumerator
     df = st.session_state.data
+    id_col = get_id_column(df)
     user_tasks = df[df['username'] == st.session_state.user]
     
     tab1, tab2 = st.tabs(["📋 My Tasks", "💾 Download & Progress"])
@@ -53,19 +61,20 @@ def main():
     with tab1:
         st.subheader(f"You have {len(user_tasks)} errors to fix")
         for idx, row in user_tasks.iterrows():
-            with st.expander(f"Task ID: {row.get('unique_id', idx)}"):
+            row_id = row[id_col]
+            with st.expander(f"Task ID: {row_id}"):
                 st.write(f"**Issue:** {row.get('constraint', 'N/A')}")
-                val = st.text_input(f"Correction for {row.get('unique_id')}", key=f"inp_{idx}")
+                val = st.text_input(f"Correction for {row_id}", key=f"inp_{idx}")
                 if st.button("Submit Fix", key=f"btn_{idx}"):
-                    st.session_state.corrections.append({'id': row['unique_id'], 'fix': val})
+                    st.session_state.corrections.append({'id': row_id, 'fix': val})
                     st.success("Correction logged!")
 
     with tab2:
         st.header("💾 Download Data")
         if st.session_state.corrections:
             corr_df = pd.DataFrame(st.session_state.corrections)
-            st.download_button("Download All My Fixes (CSV)", corr_df.to_csv(index=False), "my_corrections.csv")
-        st.write(f"Total fixes submitted this session: {len(st.session_state.corrections)}")
+            st.download_button("Download My Fixes (CSV)", corr_df.to_csv(index=False), "my_corrections.csv")
+        st.write(f"Total fixes submitted: {len(st.session_state.corrections)}")
 
 if __name__ == "__main__":
     main()
