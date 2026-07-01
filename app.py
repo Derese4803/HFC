@@ -74,13 +74,10 @@ def main():
                 st.warning(f"**Current Recorded Value:** {row.get('value')}")
                 
                 st.markdown("---")
-                reason = st.selectbox("Reason for error", [
-                    "Data entry mistake", 
-                    "Misunderstanding of question", 
-                    "Device/Technical error", 
-                    "Other"
-                ], key=f"reason_{idx}")
+                # Free-text input for the reason
+                reason = st.text_area(f"Reason for error", placeholder="Please explain why this error happened...", key=f"reason_{idx}")
                 
+                # Correction input
                 fix = st.text_input(f"Enter correct value for {row.get('variable')}", key=f"fix_{idx}")
                 
                 if st.button("Submit Fix", key=f"btn_{idx}"):
@@ -108,9 +105,6 @@ def main():
         
         if st.session_state.master_log:
             log_df = pd.DataFrame(st.session_state.master_log)
-            st.write("### 📊 Error Reasons Breakdown")
-            st.bar_chart(log_df['reason'].value_counts())
-            
             st.write("### 📝 Detailed Correction Log")
             st.dataframe(log_df, use_container_width=True)
             st.download_button("📥 Download Master Report", log_df.to_csv(index=False), "corrections.csv")
