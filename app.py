@@ -4,20 +4,53 @@ import requests
 import base64
 import io
 
-st.set_page_config(page_title="HFC Admin Dashboard", layout="wide")
+st.set_page_config(page_title="HFC Correction System", layout="wide")
 
-# (Keep your existing fetch_from_github function here)
+def fetch_from_github(filename):
+    try:
+        token = st.secrets["github"]["token"]
+        url = f"https://api.github.com/repos/Derese4803/HFC/contents/{filename}?ref=main"
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            return pd.read_csv(io.StringIO(base64.b64decode(res.json()['content']).decode('utf-8')))
+        return None
+    except: return None
+
+if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
+if "master_log" not in st.session_state: st.session_state.master_log = []
 
 def main():
     st.title("🛠️ HFC Structural Field-Data Correction System")
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
 
-    # ... (Sidebar login code remains the same)
+    with st.sidebar:
+        if st.session_state.logged_in_as is None:
+            st.subheader("👤 Enumerator Login")
+            all_users = sorted(df_c['username'].dropna().unique()) if df_c is not None else []
+            user = st.selectbox("Select Username", all_users)
+            if st.text_input("Password", type="password") == "1234":
+                if st.button("Login"): st.session_state.logged_in_as = "enumerator"; st.session_state.user = user; st.rerun()
+        else:
+            if st.button("Logout"): st.session_state.logged_in_as = None; st.rerun()
+
+    if df_c is None: st.error("Data not loaded."); return
 
     if st.session_state.logged_in_as == "enumerator":
-        # ... (Filter logic remains the same)
-        for idx, row in u_c_filtered.iterrows():
+        st.success(f"Welcome, {st.session_state.user}")
+        
+        # Workload Summary
+        u_c = df_c[df_c['username'] == st.session_state.user]
+        fixed_ids = [entry.get('number') for entry in st.session_state.master_log]
+        remaining = u_c[~u_c['number'].isin(fixed_ids)]
+        
+        c1, c2 = st.columns(2)
+        c1.metric("Enumerator", st.session_state.user)
+        c2.metric("Remaining Errors", len(remaining))
+        st.markdown("---")
+
+        for idx, row in remaining.iterrows():
             with st.expander(f"Error ID: {row.get('number')} | Farmer: {row.get('farmer_name')}"):
                 # Farmer Profile
                 st.markdown("### 👤 Farmer Information")
@@ -25,18 +58,15 @@ def main():
                 c1.write(f"**Name:** {row.get('farmer_name')}"); c1.write(f"**Phone:** {row.get('phone_number')}")
                 c2.write(f"**Woreda:** {row.get('woreda')}"); c2.write(f"**Kebele:** {row.get('kebele')}")
                 st.markdown("---")
-                
-                # Error Details
-                st.markdown("### 🔍 Error Details")
-                st.info(f"**Constraint:** {row.get('constraint')}"); st.warning(f"**Value:** {row.get('value')}")
-                
-                # Action
-                reason = st.text_area("Reason for error", key=f"r_{idx}")
+                # Correction Input
+                reason = st.text_area("Reason", key=f"r_{idx}")
                 fix = st.text_input("Correct value", key=f"f_{idx}")
                 if st.button("Submit", key=f"b_{idx}"):
                     st.session_state.master_log.append({'user': st.session_state.user, 'number': row.get('number'), 'reason': reason, 'fix': fix})
                     st.rerun()
 
-    # ... (Keep existing Admin logic)
+    elif st.session_state.logged_in_as == "admin":
+        # ... (Keep existing Admin logic)
+        pass
 
 if __name__ == "__main__": main()
