@@ -60,9 +60,15 @@ def main():
         
         st.subheader("📊 Admin Correction Dashboard")
         
-        # DOWNLOAD BUTTON
-        if not fixed_df.empty:
-            st.download_button("📥 Download All Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
+        # Metrics Row
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Errors", len(combined))
+        c2.metric("Corrected Errors", len(fixed_df))
+        c3.metric("Total Consistency", len(df_c))
+        c4.metric("Total Logic Errors", len(df_l))
+        
+        st.markdown("---")
+        if not fixed_df.empty: st.download_button("📥 Download Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
         
         summary = pd.DataFrame({'Assigned': combined.groupby('username')['number'].count(), 
                                 'Fixed': fixed_df.groupby('user')['number'].count() if not fixed_df.empty else 0}).fillna(0)
