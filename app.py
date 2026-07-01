@@ -58,13 +58,16 @@ def main():
         combined = pd.concat([df_c, df_l])
         fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'reason', 'fix'])
         
-        st.write("### 👥 Enumerator Workload Summary")
+        st.subheader("📊 Admin Correction Dashboard")
+        
+        # DOWNLOAD BUTTON
+        if not fixed_df.empty:
+            st.download_button("📥 Download All Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
+        
         summary = pd.DataFrame({'Assigned': combined.groupby('username')['number'].count(), 
                                 'Fixed': fixed_df.groupby('user')['number'].count() if not fixed_df.empty else 0}).fillna(0)
         summary['Remaining'] = summary['Assigned'] - summary['Fixed']
         st.dataframe(summary, use_container_width=True)
-        
-        if not fixed_df.empty: st.download_button("📥 Download Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
         
         tab1, tab2, tab3, tab4 = st.tabs(["📋 All", "✅ Corrected", "⚠️ Uncorrected", "📈 Performance"])
         with tab1: st.dataframe(combined)
