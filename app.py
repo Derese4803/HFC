@@ -91,8 +91,9 @@ def main():
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         combined = pd.concat([df_c, df_l])
+        fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'variable', 'reason', 'fix'])
         
-        tab1, tab2, tab3 = st.tabs(["📋 All Data", "✅ Correction Data", "⚠️ Uncorrected Data"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 All Data", "✅ Corrected Data", "⚠️ Uncorrected Data", "📈 Performance"])
         
         with tab1:
             st.write("### Total Raw Error Data")
@@ -100,18 +101,24 @@ def main():
             
         with tab2:
             st.write("### Submitted Corrections")
-            if st.session_state.master_log:
-                log_df = pd.DataFrame(st.session_state.master_log)
-                st.dataframe(log_df, use_container_width=True)
-                st.download_button("📥 Download Corrected Data", log_df.to_csv(index=False), "corrected_data.csv")
+            if not fixed_df.empty:
+                st.dataframe(fixed_df, use_container_width=True)
+                st.download_button("📥 Download Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
             else:
                 st.info("No corrections submitted yet.")
                 
         with tab3:
-            st.write("### Remaining Uncorrected Errors")
-            fixed_ids = [entry.get('number') for entry in st.session_state.master_log]
+            st.write("### Remaining Uncorrected Data")
+            fixed_ids = fixed_df['number'].tolist() if not fixed_df.empty else []
             uncorrected = combined[~combined['number'].isin(fixed_ids)]
             st.dataframe(uncorrected, use_container_width=True)
+
+        with tab4:
+            st.write("### 📈 Enumerator Performance: Corrections Submitted")
+            if not fixed_df.empty:
+                st.bar_chart(fixed_df['user'].value_counts())
+            else:
+                st.info("Waiting for data to generate performance graph.")
 
 if __name__ == "__main__":
     main()
