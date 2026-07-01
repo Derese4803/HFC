@@ -74,7 +74,6 @@ def main():
                 st.warning(f"**Current Recorded Value:** {row.get('value')}")
                 
                 st.markdown("---")
-                # Dropdown for the Reason of Error
                 reason = st.selectbox("Reason for error", [
                     "Data entry mistake", 
                     "Misunderstanding of question", 
@@ -109,6 +108,9 @@ def main():
         
         if st.session_state.master_log:
             log_df = pd.DataFrame(st.session_state.master_log)
+            st.write("### 📊 Error Reasons Breakdown")
+            st.bar_chart(log_df['reason'].value_counts())
+            
             st.write("### 📝 Detailed Correction Log")
             st.dataframe(log_df, use_container_width=True)
             st.download_button("📥 Download Master Report", log_df.to_csv(index=False), "corrections.csv")
