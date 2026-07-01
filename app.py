@@ -74,10 +74,7 @@ def main():
                 st.warning(f"**Current Recorded Value:** {row.get('value')}")
                 
                 st.markdown("---")
-                # Free-text input for the reason
-                reason = st.text_area(f"Reason for error", placeholder="Please explain why this error happened...", key=f"reason_{idx}")
-                
-                # Correction input
+                reason = st.text_area("Reason for error", placeholder="Please explain why this error happened...", key=f"reason_{idx}")
                 fix = st.text_input(f"Enter correct value for {row.get('variable')}", key=f"fix_{idx}")
                 
                 if st.button("Submit Fix", key=f"btn_{idx}"):
@@ -95,21 +92,26 @@ def main():
         st.subheader("📊 Admin Correction Dashboard")
         combined = pd.concat([df_c, df_l])
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Errors", len(combined))
-        c2.metric("Unique Farmers", combined['number'].nunique())
-        c3.metric("Enumerators Active", combined['username'].nunique())
+        tab1, tab2, tab3 = st.tabs(["📋 All Data", "✅ Correction Data", "⚠️ Uncorrected Data"])
         
-        st.write("### 📉 Errors per Enumerator")
-        st.bar_chart(combined.groupby('username')['number'].count())
-        
-        if st.session_state.master_log:
-            log_df = pd.DataFrame(st.session_state.master_log)
-            st.write("### 📝 Detailed Correction Log")
-            st.dataframe(log_df, use_container_width=True)
-            st.download_button("📥 Download Master Report", log_df.to_csv(index=False), "corrections.csv")
-        else:
-            st.info("No corrections submitted yet.")
+        with tab1:
+            st.write("### Total Raw Error Data")
+            st.dataframe(combined, use_container_width=True)
+            
+        with tab2:
+            st.write("### Submitted Corrections")
+            if st.session_state.master_log:
+                log_df = pd.DataFrame(st.session_state.master_log)
+                st.dataframe(log_df, use_container_width=True)
+                st.download_button("📥 Download Corrected Data", log_df.to_csv(index=False), "corrected_data.csv")
+            else:
+                st.info("No corrections submitted yet.")
+                
+        with tab3:
+            st.write("### Remaining Uncorrected Errors")
+            fixed_ids = [entry.get('number') for entry in st.session_state.master_log]
+            uncorrected = combined[~combined['number'].isin(fixed_ids)]
+            st.dataframe(uncorrected, use_container_width=True)
 
 if __name__ == "__main__":
     main()
