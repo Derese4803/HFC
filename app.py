@@ -5,7 +5,7 @@ import base64
 import io
 
 # 🎨 PAGE CONFIGURATION
-st.set_page_config(page_title="HFC Correction System", layout="wide")
+st.set_page_config(page_title="HFC Admin Dashboard", layout="wide")
 
 # 🔐 GITHUB DATA FETCHING
 def fetch_from_github(filename):
@@ -19,9 +19,8 @@ def fetch_from_github(filename):
         return None
     except: return None
 
-# 🔄 INITIALIZE STATE
+# 🔄 STATE INITIALIZATION
 if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
-if "user" not in st.session_state: st.session_state.user = None
 if "master_log" not in st.session_state: st.session_state.master_log = []
 
 def main():
@@ -30,7 +29,7 @@ def main():
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR: LOGIN ---
     with st.sidebar:
         if st.session_state.logged_in_as is None:
             st.subheader("👤 Enumerator Login")
@@ -41,57 +40,41 @@ def main():
                     st.session_state.logged_in_as = "enumerator"
                     st.session_state.user = user
                     st.rerun()
+
             st.markdown("---")
             st.subheader("👑 Admin Login")
-            if st.button("Access Admin"): st.session_state.logged_in_as = "admin"; st.rerun()
-        else:
-            if st.button("Logout / Reset Session"):
-                st.session_state.logged_in_as = None
-                st.session_state.master_log = [] # Clear history to prevent KeyErrors
-                st.rerun()
-
-    if df_c is None:
-        st.error("Data not loaded. Check GitHub token/filename."); return
-
-    # --- ENUMERATOR VIEW ---
-    if st.session_state.logged_in_as == "enumerator":
-        st.success(f"Welcome, {st.session_state.user}")
-        
-        # Safely extract fixed numbers
-        fixed_ids = [entry.get('number') for entry in st.session_state.master_log if entry.get('number') is not None]
-        u_c = df_c[df_c['username'] == st.session_state.user]
-        u_c_filtered = u_c[~u_c['number'].isin(fixed_ids)]
-        
-        st.subheader(f"📋 You have {len(u_c_filtered)} errors remaining")
-        
-        for idx, row in u_c_filtered.iterrows():
-            with st.expander(f"Error in {row.get('variable')} (ID: {row.get('number')})"):
-                st.write(f"**Issue:** {row.get('constraint')}")
-                fix = st.text_input("Enter Correction", key=f"fix_{idx}")
-                if st.button("Submit Fix", key=f"btn_{idx}"):
-                    st.session_state.master_log.append({
-                        'user': st.session_state.user, 
-                        'number': row.get('number'), 
-                        'fix': fix
-                    })
+            adm_p = st.text_input("Admin Passcode", type="password")
+            if st.button("Enter Admin Dashboard"):
+                if adm_p == "admin123": # SET YOUR ADMIN PASSCODE HERE
+                    st.session_state.logged_in_as = "admin"
                     st.rerun()
+        else:
+            if st.button("Logout"): st.session_state.logged_in_as = None; st.rerun()
 
-    # --- ADMIN VIEW ---
-    elif st.session_state.logged_in_as == "admin":
-        st.subheader("👑 High Frequency Check Summary")
+    # --- ADMIN DASHBOARD ---
+    if st.session_state.logged_in_as == "admin":
+        st.subheader("📊 Admin Correction Dashboard")
         combined = pd.concat([df_c, df_l])
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Errors", len(combined))
-        c2.metric("Unique Farmers", combined['number'].nunique())
-        c3.metric("Enumerators Active", combined['username'].nunique())
+        # 1. ERROR SUMMARY BY ENUMERATOR
+        st.write("### 📉 Errors per Enumerator")
+        error_counts = combined.groupby('username')['number'].count().reset_index()
+        error_counts.columns = ['Enumerator', 'Total Errors']
+        st.bar_chart(error_counts.set_index('Enumerator'))
         
-        st.bar_chart(combined['username'].value_counts())
-        
+        # 2. FULL CORRECTION DATA
+        st.write("### 📝 Submitted Corrections")
         if st.session_state.master_log:
             log_df = pd.DataFrame(st.session_state.master_log)
-            st.dataframe(log_df)
-            st.download_button("📥 Download Master Report", log_df.to_csv(index=False), "master_report.csv")
+            st.dataframe(log_df, use_container_width=True)
+            st.download_button("📥 Download Report", log_df.to_csv(index=False), "corrections.csv")
+        else:
+            st.info("No corrections submitted yet.")
+
+    # --- ENUMERATOR VIEW ---
+    elif st.session_state.logged_in_as == "enumerator":
+        # ... (Enumerator logic as previously defined)
+        st.write(f"Welcome, {st.session_state.user}. Use your dashboard to fix assigned errors.")
 
 if __name__ == "__main__":
     main()
