@@ -4,10 +4,8 @@ import requests
 import base64
 import io
 
-# 🎨 PAGE CONFIGURATION
-st.set_page_config(page_title="HFC Correction System", layout="wide")
+st.set_page_config(page_title="HFC Admin Dashboard", layout="wide")
 
-# 🔐 GITHUB DATA FETCHING
 def fetch_from_github(filename):
     try:
         token = st.secrets["github"]["token"]
@@ -19,106 +17,60 @@ def fetch_from_github(filename):
         return None
     except: return None
 
-# 🔄 INITIALIZE STATE
 if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
 if "master_log" not in st.session_state: st.session_state.master_log = []
 
 def main():
     st.title("🛠️ HFC Structural Field-Data Correction System")
-
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
 
-    # --- SIDEBAR: LOGIN ---
     with st.sidebar:
         if st.session_state.logged_in_as is None:
             st.subheader("👤 Enumerator Login")
             all_users = sorted(df_c['username'].dropna().unique()) if df_c is not None else []
             user = st.selectbox("Select Username", all_users)
             if st.text_input("Password", type="password") == "1234":
-                if st.button("Login"):
-                    st.session_state.logged_in_as = "enumerator"
-                    st.session_state.user = user
-                    st.rerun()
-            
+                if st.button("Login"): st.session_state.logged_in_as = "enumerator"; st.session_state.user = user; st.rerun()
             st.markdown("---")
             st.subheader("👑 Admin Login")
             adm_p = st.text_input("Admin Passcode", type="password")
             if st.button("Access Admin"):
-                if adm_p == "admin123":
-                    st.session_state.logged_in_as = "admin"
-                    st.rerun()
+                if adm_p == "admin123": st.session_state.logged_in_as = "admin"; st.rerun()
         else:
-            if st.button("Logout / Reset"): 
-                st.session_state.logged_in_as = None
-                st.session_state.master_log = []
-                st.rerun()
+            if st.button("Logout / Reset"): st.session_state.logged_in_as = None; st.session_state.master_log = []; st.rerun()
 
-    if df_c is None:
-        st.error("Data not loaded. Check GitHub token/filename."); return
+    if df_c is None: st.error("Data not loaded."); return
 
-    # --- ENUMERATOR VIEW ---
     if st.session_state.logged_in_as == "enumerator":
-        st.success(f"Welcome, {st.session_state.user}")
-        
         fixed_ids = [entry.get('number') for entry in st.session_state.master_log if entry.get('number') is not None]
         u_c = df_c[df_c['username'] == st.session_state.user]
         u_c_filtered = u_c[~u_c['number'].isin(fixed_ids)]
-        
-        st.subheader(f"📋 You have {len(u_c_filtered)} errors remaining")
-        
         for idx, row in u_c_filtered.iterrows():
-            with st.expander(f"Error ID: {row.get('number')} | Variable: {row.get('variable')}"):
-                st.markdown("### 🔍 Error Details")
-                st.info(f"**Constraint Rule:** {row.get('constraint')}")
-                st.warning(f"**Current Recorded Value:** {row.get('value')}")
-                
-                st.markdown("---")
-                reason = st.text_area("Reason for error", placeholder="Please explain why this error happened...", key=f"reason_{idx}")
-                fix = st.text_input(f"Enter correct value for {row.get('variable')}", key=f"fix_{idx}")
-                
-                if st.button("Submit Fix", key=f"btn_{idx}"):
-                    st.session_state.master_log.append({
-                        'user': st.session_state.user, 
-                        'number': row.get('number'), 
-                        'variable': row.get('variable'),
-                        'reason': reason,
-                        'fix': fix
-                    })
+            with st.expander(f"Error ID: {row.get('number')}"):
+                st.info(f"Rule: {row.get('constraint')}"); st.warning(f"Value: {row.get('value')}")
+                reason = st.text_area("Reason", key=f"r_{idx}"); fix = st.text_input("Correction", key=f"f_{idx}")
+                if st.button("Submit", key=f"b_{idx}"):
+                    st.session_state.master_log.append({'user': st.session_state.user, 'number': row.get('number'), 'reason': reason, 'fix': fix})
                     st.rerun()
 
-    # --- ADMIN VIEW ---
     elif st.session_state.logged_in_as == "admin":
-        st.subheader("📊 Admin Correction Dashboard")
         combined = pd.concat([df_c, df_l])
-        fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'variable', 'reason', 'fix'])
+        fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'reason', 'fix'])
         
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 All Data", "✅ Corrected Data", "⚠️ Uncorrected Data", "📈 Performance"])
+        st.write("### 👥 Enumerator Workload Summary")
+        summary = pd.DataFrame({'Assigned': combined.groupby('username')['number'].count(), 
+                                'Fixed': fixed_df.groupby('user')['number'].count() if not fixed_df.empty else 0}).fillna(0)
+        summary['Remaining'] = summary['Assigned'] - summary['Fixed']
+        st.dataframe(summary, use_container_width=True)
         
-        with tab1:
-            st.write("### Total Raw Error Data")
-            st.dataframe(combined, use_container_width=True)
-            
-        with tab2:
-            st.write("### Submitted Corrections")
-            if not fixed_df.empty:
-                st.dataframe(fixed_df, use_container_width=True)
-                st.download_button("📥 Download Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
-            else:
-                st.info("No corrections submitted yet.")
-                
-        with tab3:
-            st.write("### Remaining Uncorrected Data")
-            fixed_ids = fixed_df['number'].tolist() if not fixed_df.empty else []
-            uncorrected = combined[~combined['number'].isin(fixed_ids)]
-            st.dataframe(uncorrected, use_container_width=True)
+        if not fixed_df.empty: st.download_button("📥 Download Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
+        
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 All", "✅ Corrected", "⚠️ Uncorrected", "📈 Performance"])
+        with tab1: st.dataframe(combined)
+        with tab2: st.dataframe(fixed_df)
+        with tab3: st.dataframe(combined[~combined['number'].isin(fixed_df['number'].tolist() if not fixed_df.empty else [])])
+        with tab4: 
+            if not fixed_df.empty: st.bar_chart(fixed_df['user'].value_counts())
 
-        with tab4:
-            st.write("### 📈 Enumerator Performance: Corrections Submitted")
-            if not fixed_df.empty:
-                st.bar_chart(fixed_df['user'].value_counts())
-            else:
-                st.info("Waiting for data to generate performance graph.")
-
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
