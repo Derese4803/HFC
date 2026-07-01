@@ -61,7 +61,6 @@ def main():
     if st.session_state.logged_in_as == "enumerator":
         st.success(f"Welcome, {st.session_state.user}")
         
-        # Filter logic using 'number' as the unique ID
         fixed_ids = [entry.get('number') for entry in st.session_state.master_log if entry.get('number') is not None]
         u_c = df_c[df_c['username'] == st.session_state.user]
         u_c_filtered = u_c[~u_c['number'].isin(fixed_ids)]
@@ -75,6 +74,14 @@ def main():
                 st.warning(f"**Current Recorded Value:** {row.get('value')}")
                 
                 st.markdown("---")
+                # Dropdown for the Reason of Error
+                reason = st.selectbox("Reason for error", [
+                    "Data entry mistake", 
+                    "Misunderstanding of question", 
+                    "Device/Technical error", 
+                    "Other"
+                ], key=f"reason_{idx}")
+                
                 fix = st.text_input(f"Enter correct value for {row.get('variable')}", key=f"fix_{idx}")
                 
                 if st.button("Submit Fix", key=f"btn_{idx}"):
@@ -82,6 +89,7 @@ def main():
                         'user': st.session_state.user, 
                         'number': row.get('number'), 
                         'variable': row.get('variable'),
+                        'reason': reason,
                         'fix': fix
                     })
                     st.rerun()
@@ -91,7 +99,6 @@ def main():
         st.subheader("📊 Admin Correction Dashboard")
         combined = pd.concat([df_c, df_l])
         
-        # Analytics
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Errors", len(combined))
         c2.metric("Unique Farmers", combined['number'].nunique())
@@ -100,10 +107,9 @@ def main():
         st.write("### 📉 Errors per Enumerator")
         st.bar_chart(combined.groupby('username')['number'].count())
         
-        # Correction Data
-        st.write("### 📝 Submitted Corrections")
         if st.session_state.master_log:
             log_df = pd.DataFrame(st.session_state.master_log)
+            st.write("### 📝 Detailed Correction Log")
             st.dataframe(log_df, use_container_width=True)
             st.download_button("📥 Download Master Report", log_df.to_csv(index=False), "corrections.csv")
         else:
