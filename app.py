@@ -37,7 +37,7 @@ def main():
 
     if df_c is None: st.error("Data not loaded."); return
 
-    fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'reason', 'fix'])
+    fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number'])
 
     if st.session_state.logged_in_as == "enumerator":
         u_c = df_c[df_c['username'] == st.session_state.user]
@@ -51,17 +51,25 @@ def main():
 
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
-        total_c, total_l = len(df_c), len(df_l)
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Errors", total_c + total_l)
-        c2.metric("Consistency", total_c)
-        c3.metric("Logic Errors", total_l)
-        c4.metric("Remaining", (total_c + total_l) - len(fixed_df))
+        combined = pd.concat([df_c, df_l])
         
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 All", "✅ Corrected", "📈 Performance", "📊 Stats"])
-        with tab1: st.dataframe(pd.concat([df_c, df_l]))
+        # Metrics
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total", len(combined)); c2.metric("Consistency", len(df_c)); c3.metric("Logic", len(df_l)); c4.metric("Remaining", len(combined)-len(fixed_df))
+        
+        # Enumerator Table
+        stats = combined.groupby('username')['number'].count().reset_index()
+        stats.columns = ['Enumerator', 'Assigned']
+        fixed_stats = fixed_df.groupby('user')['number'].count().reset_index()
+        fixed_stats.columns = ['Enumerator', 'Fixed']
+        final_stats = pd.merge(stats, fixed_stats, on='Enumerator', how='left').fillna(0)
+        final_stats['Remaining'] = final_stats['Assigned'] - final_stats['Fixed']
+        st.dataframe(final_stats, use_container_width=True)
+        
+        # Tabs
+        tab1, tab2, tab3 = st.tabs(["📋 All Data", "✅ Corrected", "📈 Performance"])
+        with tab1: st.dataframe(combined)
         with tab2: st.dataframe(fixed_df); st.download_button("Download", fixed_df.to_csv(), "data.csv") if not fixed_df.empty else None
         with tab3: st.bar_chart(fixed_df['user'].value_counts()) if not fixed_df.empty else None
-        with tab4: st.bar_chart(pd.DataFrame({"Status": ["Fixed", "Remaining"], "Count": [len(fixed_df), (total_c+total_l)-len(fixed_df)]}).set_index("Status"))
 
 if __name__ == "__main__": main()
