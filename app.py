@@ -49,7 +49,10 @@ def main():
                     st.session_state.logged_in_as = "admin"
                     st.rerun()
         else:
-            if st.button("Logout"): st.session_state.logged_in_as = None; st.rerun()
+            if st.button("Logout / Reset"): 
+                st.session_state.logged_in_as = None
+                st.session_state.master_log = []
+                st.rerun()
 
     if df_c is None:
         st.error("Data not loaded. Check GitHub token/filename."); return
@@ -57,6 +60,8 @@ def main():
     # --- ENUMERATOR VIEW ---
     if st.session_state.logged_in_as == "enumerator":
         st.success(f"Welcome, {st.session_state.user}")
+        
+        # Filter logic using 'number' as the unique ID
         fixed_ids = [entry.get('number') for entry in st.session_state.master_log if entry.get('number') is not None]
         u_c = df_c[df_c['username'] == st.session_state.user]
         u_c_filtered = u_c[~u_c['number'].isin(fixed_ids)]
@@ -65,9 +70,13 @@ def main():
         
         for idx, row in u_c_filtered.iterrows():
             with st.expander(f"Error ID: {row.get('number')} | Variable: {row.get('variable')}"):
+                st.markdown("### 🔍 Error Details")
                 st.info(f"**Constraint Rule:** {row.get('constraint')}")
-                st.write(f"**Current Recorded Value:** {row.get('value')}")
+                st.warning(f"**Current Recorded Value:** {row.get('value')}")
+                
+                st.markdown("---")
                 fix = st.text_input(f"Enter correct value for {row.get('variable')}", key=f"fix_{idx}")
+                
                 if st.button("Submit Fix", key=f"btn_{idx}"):
                     st.session_state.master_log.append({
                         'user': st.session_state.user, 
@@ -96,7 +105,9 @@ def main():
         if st.session_state.master_log:
             log_df = pd.DataFrame(st.session_state.master_log)
             st.dataframe(log_df, use_container_width=True)
-            st.download_button("📥 Download Report", log_df.to_csv(index=False), "corrections.csv")
+            st.download_button("📥 Download Master Report", log_df.to_csv(index=False), "corrections.csv")
+        else:
+            st.info("No corrections submitted yet.")
 
 if __name__ == "__main__":
     main()
