@@ -4,10 +4,8 @@ import requests
 import base64
 import io
 
-# 🎨 PAGE CONFIGURATION
-st.set_page_config(page_title="HFC Correction System", layout="wide")
+st.set_page_config(page_title="HFC Admin Dashboard", layout="wide")
 
-# 🔐 GITHUB DATA FETCHING
 def fetch_from_github(filename):
     try:
         token = st.secrets["github"]["token"]
@@ -19,72 +17,47 @@ def fetch_from_github(filename):
         return None
     except: return None
 
-# 🔄 INITIALIZE SHARED STATE
 if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
 if "master_log" not in st.session_state: st.session_state.master_log = []
 
 def main():
     st.title("🛠️ HFC Structural Field-Data Correction System")
-    
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
-    
-    if df_c is None: st.error("Data not loaded."); return
 
-    # --- SIDEBAR: LOGIN ---
     with st.sidebar:
         if st.session_state.logged_in_as is None:
             user = st.selectbox("Select Username", sorted(df_c['username'].dropna().unique()))
             if st.text_input("Password", type="password") == "1234":
                 if st.button("Login"): st.session_state.logged_in_as = "enumerator"; st.session_state.user = user; st.rerun()
-            st.subheader("👑 Admin Access")
-            if st.text_input("Admin Pass", type="password") == "admin123":
-                if st.button("Enter Admin"): st.session_state.logged_in_as = "admin"; st.rerun()
+            if st.text_input("Admin Passcode", type="password") == "admin123":
+                if st.button("Access Admin"): st.session_state.logged_in_as = "admin"; st.rerun()
         else:
-            if st.button("Logout"): st.session_state.logged_in_as = None; st.rerun()
+            if st.button("Logout"): st.session_state.logged_in_as = None; st.session_state.master_log = []; st.rerun()
 
-    # --- LOGIC TO TRACK REAL-TIME PROGRESS ---
-    fixed_df = pd.DataFrame(st.session_state.master_log)
-    fixed_ids = fixed_df['number'].tolist() if not fixed_df.empty else []
-    combined = pd.concat([df_c, df_l])
+    if df_c is None: st.error("Data not loaded."); return
 
-    # --- ENUMERATOR VIEW ---
     if st.session_state.logged_in_as == "enumerator":
-        st.header(f"👤 User: {st.session_state.user}")
-        
-        # Calculate Remaining dynamically
         u_c = df_c[df_c['username'] == st.session_state.user]
-        remaining = u_c[~u_c['number'].isin(fixed_ids)]
-        
-        st.metric("Errors Remaining", len(remaining))
-        
+        remaining = u_c[~u_c['number'].isin([e['number'] for e in st.session_state.master_log])]
         for idx, row in remaining.iterrows():
             with st.expander(f"Error ID: {row.get('number')} | Farmer: {row.get('farmer_name')}"):
-                st.info(f"Rule: {row.get('constraint')}")
-                st.warning(f"Value: {row.get('value')}")
-                reason = st.text_area("Reason", key=f"r_{idx}")
-                fix = st.text_input("Correct value", key=f"f_{idx}")
+                reason = st.text_area("Reason", key=f"r_{idx}"); fix = st.text_input("Correct value", key=f"f_{idx}")
                 if st.button("Submit Fix", key=f"b_{idx}"):
                     st.session_state.master_log.append({'user': st.session_state.user, 'number': row.get('number'), 'reason': reason, 'fix': fix})
                     st.rerun()
 
-    # --- ADMIN VIEW ---
     elif st.session_state.logged_in_as == "admin":
-        st.subheader("📊 Admin Correction Dashboard")
+        fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'reason', 'fix'])
+        combined = pd.concat([df_c, df_l])
         
-        # REAL-TIME METRICS
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Initial Errors", len(combined))
-        c2.metric("Total Corrected", len(fixed_df))
-        c3.metric("Remaining Uncorrected", len(combined) - len(fixed_df))
+        c1.metric("Total", len(combined)); c2.metric("Corrected", len(fixed_df)); c3.metric("Remaining", len(combined) - len(fixed_df))
         
-        st.write("### 👥 Enumerator Workload Progress")
-        summary = pd.DataFrame({'Assigned': combined.groupby('username')['number'].count(), 
-                                'Fixed': fixed_df.groupby('user')['number'].count() if not fixed_df.empty else 0}).fillna(0)
-        st.dataframe(summary, use_container_width=True)
-        
-        if not fixed_df.empty: 
-            st.download_button("📥 Download Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 All Data", "✅ Corrected", "📈 Performance", "📊 Statistics"])
+        with tab1: st.dataframe(combined)
+        with tab2: st.dataframe(fixed_df); st.download_button("Download", fixed_df.to_csv(index=False), "corrected.csv") if not fixed_df.empty else None
+        with tab3: st.bar_chart(fixed_df['user'].value_counts()) if not fixed_df.empty else st.info("No data")
+        with tab4: st.bar_chart(pd.DataFrame({"Status": ["Fixed", "Remaining"], "Count": [len(fixed_df), len(combined)-len(fixed_df)]}).set_index("Status"))
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
