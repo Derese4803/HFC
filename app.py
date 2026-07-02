@@ -44,13 +44,10 @@ def styled_metric(label, value, bg_color):
         unsafe_allow_html=True
     )
 
-# 🔄 INITIALIZE
-if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
-
 def main():
     st.title("🛠️ HFC Structural Field-Data Correction System")
     
-    # 1. Fetch all data (including the shared correction log)
+    # 1. Fetch data
     df_c, _ = fetch_from_github("Constriantt.csv")
     df_l, _ = fetch_from_github("Logicc.csv")
     fixed_df, sha = fetch_from_github("corrections.csv")
@@ -62,47 +59,32 @@ def main():
     df_l['error_type'] = 'Logic Error'
     combined = pd.concat([df_c, df_l])
     
-    # 2. Logic to handle empty correction file
     if fixed_df.empty:
         fixed_df = pd.DataFrame(columns=['user', 'number', 'type', 'reason', 'fix'])
 
     remaining = combined[~combined['number'].isin(fixed_df['number'].tolist())]
 
     # --- SIDEBAR ---
+    if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
     with st.sidebar:
         if st.session_state.logged_in_as is None:
-            st.subheader("👤 Login")
             user = st.selectbox("Username", sorted(combined['username'].dropna().unique()))
-            if st.text_input("Password", type="password") == "1234":
-                if st.button("Login"): 
-                    st.session_state.logged_in_as = "enumerator"
-                    st.session_state.user = user
-                    st.rerun()
-            st.markdown("---")
+            if st.button("Login"): st.session_state.update({"logged_in_as": "enumerator", "user": user})
             if st.text_input("Admin Passcode", type="password") == "admin123":
-                if st.button("Access Admin"): 
-                    st.session_state.logged_in_as = "admin"
-                    st.rerun()
-        else:
-            if st.button("Logout"): 
-                st.session_state.logged_in_as = None
-                st.rerun()
+                if st.button("Access Admin"): st.session_state.logged_in_as = "admin"
+        elif st.button("Logout"): st.session_state.logged_in_as = None
 
     # --- ENUMERATOR VIEW ---
     if st.session_state.logged_in_as == "enumerator":
-        st.header(f"👤 Enumerator: {st.session_state.user}")
         u_rem = remaining[remaining['username'] == st.session_state.user]
         st.metric("Errors Remaining", len(u_rem))
-        
         for idx, row in u_rem.iterrows():
             with st.expander(f"{row['error_type']} (ID: {row['number']})"):
                 reason = st.text_area("Reason", key=f"r_{idx}")
                 fix = st.text_input("Correction", key=f"f_{idx}")
                 if st.button("Submit Fix", key=f"b_{idx}"):
                     new_fix = pd.DataFrame([{'user': st.session_state.user, 'number': row['number'], 'type': row['error_type'], 'reason': reason, 'fix': fix}])
-                    updated_df = pd.concat([fixed_df, new_fix], ignore_index=True)
-                    save_to_github("corrections.csv", updated_df, sha)
-                    st.success("Saved to GitHub!")
+                    save_to_github("corrections.csv", pd.concat([fixed_df, new_fix], ignore_index=True), sha)
                     st.rerun()
 
     # --- ADMIN VIEW ---
@@ -114,7 +96,19 @@ def main():
         with c3: styled_metric("Consistency", len(df_c), "#007bff")
         with c4: styled_metric("Logic", len(df_l), "#fd7e14")
         with c5: styled_metric("Remaining", len(remaining), "#dc3545")
-        st.dataframe(combined, use_container_width=True)
+        
+        st.markdown("---")
+        st.write("### 👥 Performance by Enumerator")
+        stats = combined.groupby('username')['number'].count().reset_index().rename(columns={'number': 'Assigned'})
+        f_stats = fixed_df.groupby('user')['number'].count().reset_index().rename(columns={'number': 'Fixed'})
+        final = pd.merge(stats, f_stats, left_on='username', right_on='user', how='left').fillna(0)
+        st.dataframe(final, use_container_width=True)
+        
+        t1, t2, t3, t4 = st.tabs(["📋 All Data", "✅ Corrected", "📈 Performance", "📊 Statistics"])
+        with t1: st.dataframe(combined, use_container_width=True)
+        with t2: st.dataframe(fixed_df, use_container_width=True)
+        with t3: st.bar_chart(fixed_df['user'].value_counts()) if not fixed_df.empty else None
+        with t4: st.bar_chart(pd.DataFrame({"Status": ["Fixed", "Remaining"], "Count": [len(fixed_df), len(combined)-len(fixed_df)]}).set_index("Status"))
 
 if __name__ == "__main__":
     main()
