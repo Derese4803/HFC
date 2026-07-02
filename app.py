@@ -50,7 +50,8 @@ def main():
     combined = pd.concat([df_c, df_l])
 
     # --- ENUMERATOR VIEW ---
-    if st.session_state.logged_in_as == "enumerator":
+    
+               if st.session_state.logged_in_as == "enumerator":
         st.header(f"👤 Enumerator: {st.session_state.user}")
         u_c = combined[combined['username'] == st.session_state.user]
         remaining = u_c[~u_c['number'].isin(fixed_df['number'].tolist())]
@@ -61,14 +62,28 @@ def main():
         for idx, row in remaining.iterrows():
             error_label = "Consistency Error" if row.get('number') in df_c['number'].values else "Logic Error"
             with st.expander(f"Error ID: {row.get('number')} | {error_label}"):
+                st.markdown("### 👤 Respondent Profile")
+                c1, c2 = st.columns(2)
+                c1.write(f"**Name:** {row.get('respondent_name')}")
+                c1.write(f"**Phone:** {row.get('phone_no')}")
+                c2.write(f"**Kebele:** {row.get('kebele_name')}")
+                
+                st.markdown("---")
+                st.markdown("### 🔍 Error Details")
                 st.info(f"**Rule:** {row.get('constraint')}")
                 st.warning(f"**Current Value:** {row.get('value')}")
+                
                 reason = st.text_area("Reason for error", key=f"r_{idx}")
                 fix = st.text_input("Corrected Value", key=f"f_{idx}")
                 if st.button("Submit Fix", key=f"b_{idx}"):
-                    st.session_state.master_log.append({'user': st.session_state.user, 'number': row.get('number'), 'type': error_label, 'reason': reason, 'fix': fix})
+                    st.session_state.master_log.append({
+                        'user': st.session_state.user, 
+                        'number': row.get('number'), 
+                        'type': error_label, 
+                        'reason': reason, 
+                        'fix': fix
+                    })
                     st.rerun()
-
     # --- ADMIN VIEW ---
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
