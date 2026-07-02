@@ -49,6 +49,14 @@ def main():
     df_l['error_type'] = 'Logic Error'
     combined = pd.concat([df_c, df_l])
 
+    # --- SHARED DATA LOGIC (CRASH-PROOFED) ---
+    if st.session_state.master_log:
+        fixed_df = pd.DataFrame(st.session_state.master_log)
+    else:
+        fixed_df = pd.DataFrame(columns=['user', 'number', 'type', 'reason', 'fix'])
+    
+    remaining = combined[~combined['number'].isin(fixed_df['number'].tolist())]
+
     # --- SIDEBAR: LOGIN ---
     with st.sidebar:
         if st.session_state.logged_in_as is None:
@@ -68,10 +76,6 @@ def main():
             if st.button("Logout"): 
                 st.session_state.logged_in_as = None
                 st.rerun()
-
-    # --- SHARED DATA LOGIC ---
-    fixed_df = pd.DataFrame(st.session_state.master_log)
-    remaining = combined[~combined['number'].isin(fixed_df['number'].tolist())]
 
     # --- ENUMERATOR VIEW ---
     if st.session_state.logged_in_as == "enumerator":
