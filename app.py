@@ -96,25 +96,24 @@ def main():
                     st.rerun()
 
     # --- ADMIN VIEW ---
-  elif st.session_state.logged_in_as == "admin":
+ elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
-        # Calculations
+        # Metrics
         total_errors = len(combined)
         total_corrected = len(fixed_df)
         total_consistency = len(df_c)
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
         
-        # 5-Column Metrics
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Errors", total_errors)
-        c2.metric("Total Corrected", total_corrected)
+        c2.metric("Total Corrected", total_corrected, delta=f"{total_corrected} Fixed")
         c3.metric("Consistency", total_consistency)
         c4.metric("Logic", total_logic)
-        c5.metric("Remaining", remaining)
+        c5.metric("Remaining", remaining, delta_color="inverse")
         
-        st.write("---")
+        st.markdown("---")
         st.write("### 👥 Enumerator Workload Progress")
         
         st.write("### 👥 Performance by Enumerator")
