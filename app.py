@@ -96,7 +96,7 @@ def main():
                     st.rerun()
 
     # --- ADMIN VIEW ---
-   elif st.session_state.logged_in_as == "admin":
+  elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
         # Calculations
@@ -105,7 +105,8 @@ def main():
         total_consistency = len(df_c)
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
-
+        
+        # 5-Column Metrics
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Errors", total_errors)
         c2.metric("Total Corrected", total_corrected)
