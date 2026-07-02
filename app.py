@@ -36,7 +36,7 @@ if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
 if "master_log" not in st.session_state: st.session_state.master_log = []
 
 def main():
-    st.title("🛠 HFC Structural Field-Data Correction System")
+    st.title("🛠️ HFC Structural Field-Data Correction System")
     
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
@@ -78,7 +78,8 @@ def main():
         
         st.metric("Total Errors Remaining", len(remaining))
         st.markdown("---")
-[7/2/2026 12:15 PM] @ Dere: for idx, row in remaining.iterrows():
+
+        for idx, row in remaining.iterrows():
             error_label = "Consistency Error" if row.get('number') in df_c['number'].values else "Logic Error"
             with st.expander(f"{error_label} (ID: {row.get('number')})"):
                 st.markdown("### 👤 Respondent Profile")
@@ -87,14 +88,14 @@ def main():
                 kebele_to_show = row.get('kebele_name') or row.get('kebele') or "N/A"
                 
                 c1, c2 = st.columns(2)
-                c1.write(f"Name: {name_to_show}")
-                c1.write(f"Phone: {phone_to_show}")
-                c2.write(f"Kebele: {kebele_to_show}")
+                c1.write(f"**Name:** {name_to_show}")
+                c1.write(f"**Phone:** {phone_to_show}")
+                c2.write(f"**Kebele:** {kebele_to_show}")
                 
                 st.markdown("---")
                 st.markdown("### 🔍 Error Details")
-                st.info(f"Rule: {row.get('constraint')}")
-                st.warning(f"Current Value: {row.get('value')}")
+                st.info(f"**Rule:** {row.get('constraint')}")
+                st.warning(f"**Current Value:** {row.get('value')}")
                 
                 reason = st.text_area("Reason for error", key=f"r_{idx}")
                 fix = st.text_input("Corrected Value", key=f"f_{idx}")
@@ -141,5 +142,5 @@ def main():
         with tab3: st.bar_chart(fixed_df['user'].value_counts()) if not fixed_df.empty else None
         with tab4: st.bar_chart(pd.DataFrame({"Status": ["Fixed", "Remaining"], "Count": [len(fixed_df), len(combined)-len(fixed_df)]}).set_index("Status"))
 
-if name == "main":
+if __name__ == "__main__":
     main()
