@@ -96,7 +96,7 @@ def main():
                     st.rerun()
 
     # --- ADMIN VIEW ---
-    elif st.session_state.logged_in_as == "admin":
+   elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
         # Calculations
@@ -105,20 +105,15 @@ def main():
         total_consistency = len(df_c)
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
-        
-        # 5-Column Metrics with Color-Coded Deltas
+
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Errors", total_errors)
-        # Green for completed work
-        c2.metric("Total Corrected", total_corrected, delta=f"{total_corrected} Fixed", delta_color="normal")
+        c2.metric("Total Corrected", total_corrected)
         c3.metric("Consistency", total_consistency)
         c4.metric("Logic", total_logic)
-        # Inverse color (red) for remaining to highlight the need for action
-        c5.metric("Remaining", remaining, delta=f"-{total_corrected}", delta_color="inverse")
+        c5.metric("Remaining", remaining)
         
-        st.markdown("---")
-        
-        # Visualizing the flow with colors
+        st.write("---")
         st.write("### 👥 Enumerator Workload Progress")
         
         st.write("### 👥 Performance by Enumerator")
