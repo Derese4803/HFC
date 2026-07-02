@@ -44,65 +44,72 @@ def main():
     if df_c is None or df_l is None: 
         st.error("Data not loaded. Check GitHub token/files."); return
 
-    # --- PERMANENTLY LABEL DATA TYPES ---
-    df_c['error_type'] = 'Consistency Error'
-    df_l['error_type'] = 'Logic Error'
-    combined = pd.concat([df_c, df_l])
-
-    # --- SHARED DATA LOGIC (CRASH-PROOFED) ---
-    if st.session_state.master_log:
-        fixed_df = pd.DataFrame(st.session_state.master_log)
-    else:
-        fixed_df = pd.DataFrame(columns=['user', 'number', 'type', 'reason', 'fix'])
-    
-    remaining = combined[~combined['number'].isin(fixed_df['number'].tolist())]
-
     # --- SIDEBAR: LOGIN ---
     with st.sidebar:
         if st.session_state.logged_in_as is None:
-            st.subheader("👤 Login")
-            user = st.selectbox("Username", sorted(combined['username'].dropna().unique()))
+            st.subheader("👤 Enumerator Login")
+            user = st.selectbox("Select Username", sorted(df_c['username'].dropna().unique()))
             if st.text_input("Password", type="password") == "1234":
                 if st.button("Login"): 
                     st.session_state.logged_in_as = "enumerator"
                     st.session_state.user = user
                     st.rerun()
             st.markdown("---")
+            st.subheader("👑 Admin Login")
             if st.text_input("Admin Passcode", type="password") == "admin123":
                 if st.button("Access Admin"): 
                     st.session_state.logged_in_as = "admin"
                     st.rerun()
         else:
-            if st.button("Logout"): 
+            if st.button("Logout / Reset"): 
                 st.session_state.logged_in_as = None
+                st.session_state.master_log = []
                 st.rerun()
+
+    # --- SHARED DATA LOGIC ---
+    fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'type', 'reason', 'fix'])
+    combined = pd.concat([df_c, df_l])
 
     # --- ENUMERATOR VIEW ---
     if st.session_state.logged_in_as == "enumerator":
         st.header(f"👤 Enumerator: {st.session_state.user}")
-        u_rem = remaining[remaining['username'] == st.session_state.user]
-        st.metric("Errors Remaining", len(u_rem))
+        u_c = combined[combined['username'] == st.session_state.user]
+        remaining = u_c[~u_c['number'].isin(fixed_df['number'].tolist())]
         
-        for idx, row in u_rem.iterrows():
-            with st.expander(f"{row['error_type']} (ID: {row['number']})"):
+        st.metric("Total Errors Remaining", len(remaining))
+        
+        for idx, row in remaining.iterrows():
+            error_label = "Consistency Error" if row.get('number') in df_c['number'].values else "Logic Error"
+            with st.expander(f"{error_label} (ID: {row.get('number')})"):
                 name = row.get('respondent_name') or row.get('farmer_name') or "N/A"
-                st.write(f"**Name:** {name}")
-                st.info(f"**Rule:** {row['constraint']}")
+                c1, c2 = st.columns(2)
+                c1.write(f"**Name:** {name}")
+                c2.write(f"**Rule:** {row.get('constraint')}")
+                
                 reason = st.text_area("Reason", key=f"r_{idx}")
                 fix = st.text_input("Correction", key=f"f_{idx}")
                 if st.button("Submit Fix", key=f"b_{idx}"):
-                    st.session_state.master_log.append({'user': st.session_state.user, 'number': row['number'], 'type': row['error_type'], 'reason': reason, 'fix': fix})
+                    st.session_state.master_log.append({'user': st.session_state.user, 'number': row.get('number'), 'type': error_label, 'reason': reason, 'fix': fix})
                     st.rerun()
 
     # --- ADMIN VIEW ---
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
+        
+        total_errors = len(combined)
+        total_corrected = len(fixed_df)
+        total_consistency = len(df_c)
+        total_logic = len(df_l)
+        remaining = total_errors - total_corrected
+        
         c1, c2, c3, c4, c5 = st.columns(5)
-        with c1: styled_metric("Total", len(combined), "#6c757d")
-        with c2: styled_metric("Fixed", len(fixed_df), "#28a745")
-        with c3: styled_metric("Consistency", len(df_c), "#007bff")
-        with c4: styled_metric("Logic", len(df_l), "#fd7e14")
-        with c5: styled_metric("Remaining", len(remaining), "#dc3545")
+        with c1: styled_metric("Total Errors", total_errors, "#6c757d")
+        with c2: styled_metric("Corrected", total_corrected, "#28a745")
+        with c3: styled_metric("Consistency", total_consistency, "#007bff")
+        with c4: styled_metric("Logic", total_logic, "#fd7e14")
+        with c5: styled_metric("Remaining", remaining, "#dc3545")
+        
+        st.markdown("---")
         st.dataframe(combined, use_container_width=True)
 
 if __name__ == "__main__":
