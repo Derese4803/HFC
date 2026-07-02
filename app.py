@@ -19,6 +19,18 @@ def fetch_from_github(filename):
         return None
     except: return None
 
+# 🟦 CUSTOM METRIC BOX FUNCTION
+def styled_metric(label, value, bg_color):
+    st.markdown(
+        f"""
+        <div style="background-color: {bg_color}; padding: 15px; border-radius: 10px; text-align: center; color: white; border: 1px solid #ddd;">
+            <h4 style="margin: 0; color: white; font-size: 14px;">{label}</h4>
+            <h2 style="margin: 0; color: white;">{value}</h2>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 # 🔄 INITIALIZE SHARED STATE
 if "logged_in_as" not in st.session_state: st.session_state.logged_in_as = None
 if "master_log" not in st.session_state: st.session_state.master_log = []
@@ -92,8 +104,7 @@ def main():
                     st.rerun()
 
     # --- ADMIN VIEW ---
-   # --- ADMIN VIEW ---
-   elif st.session_state.logged_in_as == "admin":
+    elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
         # Calculations
@@ -103,13 +114,17 @@ def main():
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
         
-        # Color-coded Metric Boxes
+        # Custom Color-Coded Boxes
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1: styled_metric("Total", total_errors, "#6c757d")     # Gray
         with c2: styled_metric("Corrected", total_corrected, "#28a745") # Green
         with c3: styled_metric("Consistency", total_consistency, "#007bff") # Blue
         with c4: styled_metric("Logic", total_logic, "#fd7e14")      # Orange
         with c5: styled_metric("Remaining", remaining, "#dc3545")    # Red
+        
+        st.markdown("---")
+        
+        # Enumerator Stats
         st.write("### 👥 Performance by Enumerator")
         stats = combined.groupby('username')['number'].count().reset_index()
         stats.columns = ['Enumerator', 'Assigned']
