@@ -29,7 +29,8 @@ def main():
     df_c = fetch_from_github("Constriantt.csv")
     df_l = fetch_from_github("Logicc.csv")
     
-    if df_c is None or df_l is None: st.error("Data not loaded. Check GitHub token/files."); return
+    if df_c is None or df_l is None: 
+        st.error("Data not loaded. Check GitHub token/files."); return
 
     # --- SIDEBAR: LOGIN ---
     with st.sidebar:
@@ -37,21 +38,28 @@ def main():
             st.subheader("👤 Enumerator Login")
             user = st.selectbox("Select Username", sorted(df_c['username'].dropna().unique()))
             if st.text_input("Password", type="password") == "1234":
-                if st.button("Login"): st.session_state.logged_in_as = "enumerator"; st.session_state.user = user; st.rerun()
+                if st.button("Login"): 
+                    st.session_state.logged_in_as = "enumerator"
+                    st.session_state.user = user
+                    st.rerun()
             st.markdown("---")
             st.subheader("👑 Admin Login")
             if st.text_input("Admin Passcode", type="password") == "admin123":
-                if st.button("Access Admin"): st.session_state.logged_in_as = "admin"; st.rerun()
+                if st.button("Access Admin"): 
+                    st.session_state.logged_in_as = "admin"
+                    st.rerun()
         else:
-            if st.button("Logout / Reset"): st.session_state.logged_in_as = None; st.session_state.master_log = []; st.rerun()
+            if st.button("Logout / Reset"): 
+                st.session_state.logged_in_as = None
+                st.session_state.master_log = []
+                st.rerun()
 
     # --- SHARED DATA LOGIC ---
     fixed_df = pd.DataFrame(st.session_state.master_log) if st.session_state.master_log else pd.DataFrame(columns=['user', 'number', 'type', 'reason', 'fix'])
     combined = pd.concat([df_c, df_l])
 
     # --- ENUMERATOR VIEW ---
-    
-               if st.session_state.logged_in_as == "enumerator":
+    if st.session_state.logged_in_as == "enumerator":
         st.header(f"👤 Enumerator: {st.session_state.user}")
         u_c = combined[combined['username'] == st.session_state.user]
         remaining = u_c[~u_c['number'].isin(fixed_df['number'].tolist())]
@@ -76,26 +84,19 @@ def main():
                 reason = st.text_area("Reason for error", key=f"r_{idx}")
                 fix = st.text_input("Corrected Value", key=f"f_{idx}")
                 if st.button("Submit Fix", key=f"b_{idx}"):
-                    st.session_state.master_log.append({
-                        'user': st.session_state.user, 
-                        'number': row.get('number'), 
-                        'type': error_label, 
-                        'reason': reason, 
-                        'fix': fix
-                    })
+                    st.session_state.master_log.append({'user': st.session_state.user, 'number': row.get('number'), 'type': error_label, 'reason': reason, 'fix': fix})
                     st.rerun()
+
     # --- ADMIN VIEW ---
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
-        # Real-time metrics
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Errors", len(combined))
         c2.metric("Consistency", len(df_c))
         c3.metric("Logic", len(df_l))
         c4.metric("Remaining", len(combined) - len(fixed_df))
         
-        # Enumerator breakdown
         st.write("### 👥 Performance by Enumerator")
         stats = combined.groupby('username')['number'].count().reset_index()
         stats.columns = ['Enumerator', 'Assigned']
