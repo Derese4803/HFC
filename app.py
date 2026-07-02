@@ -19,7 +19,7 @@ def fetch_from_github(filename):
         return None
     except: return None
 
-# 🟦 METRIC BOX FUNCTION
+# 🟦 CUSTOM METRIC BOX FUNCTION
 def styled_metric(label, value, bg_color):
     st.markdown(
         f"""
@@ -77,17 +77,28 @@ def main():
         remaining = u_c[~u_c['number'].isin(fixed_df['number'].tolist())]
         
         st.metric("Total Errors Remaining", len(remaining))
-        
+        st.markdown("---")
+
         for idx, row in remaining.iterrows():
             error_label = "Consistency Error" if row.get('number') in df_c['number'].values else "Logic Error"
             with st.expander(f"{error_label} (ID: {row.get('number')})"):
-                name = row.get('respondent_name') or row.get('farmer_name') or "N/A"
-                c1, c2 = st.columns(2)
-                c1.write(f"**Name:** {name}")
-                c2.write(f"**Rule:** {row.get('constraint')}")
+                st.markdown("### 👤 Respondent Profile")
+                name_to_show = row.get('respondent_name') or row.get('farmer_name') or "N/A"
+                phone_to_show = row.get('phone_no') or row.get('phone_number') or "N/A"
+                kebele_to_show = row.get('kebele_name') or row.get('kebele') or "N/A"
                 
-                reason = st.text_area("Reason", key=f"r_{idx}")
-                fix = st.text_input("Correction", key=f"f_{idx}")
+                c1, c2 = st.columns(2)
+                c1.write(f"**Name:** {name_to_show}")
+                c1.write(f"**Phone:** {phone_to_show}")
+                c2.write(f"**Kebele:** {kebele_to_show}")
+                
+                st.markdown("---")
+                st.markdown("### 🔍 Error Details")
+                st.info(f"**Rule:** {row.get('constraint')}")
+                st.warning(f"**Current Value:** {row.get('value')}")
+                
+                reason = st.text_area("Reason for error", key=f"r_{idx}")
+                fix = st.text_input("Corrected Value", key=f"f_{idx}")
                 if st.button("Submit Fix", key=f"b_{idx}"):
                     st.session_state.master_log.append({'user': st.session_state.user, 'number': row.get('number'), 'type': error_label, 'reason': reason, 'fix': fix})
                     st.rerun()
@@ -96,21 +107,40 @@ def main():
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
+        # Calculations
         total_errors = len(combined)
         total_corrected = len(fixed_df)
         total_consistency = len(df_c)
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
         
+        # Custom Color-Coded Boxes
         c1, c2, c3, c4, c5 = st.columns(5)
-        with c1: styled_metric("Total Errors", total_errors, "#6c757d")
-        with c2: styled_metric("Corrected", total_corrected, "#28a745")
-        with c3: styled_metric("Consistency", total_consistency, "#007bff")
-        with c4: styled_metric("Logic", total_logic, "#fd7e14")
-        with c5: styled_metric("Remaining", remaining, "#dc3545")
+        with c1: styled_metric("Total", total_errors, "#6c757d")     # Gray
+        with c2: styled_metric("Corrected", total_corrected, "#28a745") # Green
+        with c3: styled_metric("Consistency", total_consistency, "#007bff") # Blue
+        with c4: styled_metric("Logic", total_logic, "#fd7e14")      # Orange
+        with c5: styled_metric("Remaining", remaining, "#dc3545")    # Red
         
         st.markdown("---")
-        st.dataframe(combined, use_container_width=True)
+        
+        # Enumerator Stats
+        st.write("### 👥 Performance by Enumerator")
+        stats = combined.groupby('username')['number'].count().reset_index()
+        stats.columns = ['Enumerator', 'Assigned']
+        f_stats = fixed_df.groupby('user')['number'].count().reset_index()
+        f_stats.columns = ['Enumerator', 'Fixed']
+        final = pd.merge(stats, f_stats, on='Enumerator', how='left').fillna(0)
+        final['Remaining'] = final['Assigned'] - final['Fixed']
+        st.dataframe(final, use_container_width=True)
+        
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 All Data", "✅ Corrected", "📈 Performance", "📊 Statistics"])
+        with tab1: st.dataframe(combined, use_container_width=True)
+        with tab2: 
+            st.dataframe(fixed_df, use_container_width=True)
+            if not fixed_df.empty: st.download_button("📥 Download Corrected Data", fixed_df.to_csv(index=False), "corrected_data.csv")
+        with tab3: st.bar_chart(fixed_df['user'].value_counts()) if not fixed_df.empty else None
+        with tab4: st.bar_chart(pd.DataFrame({"Status": ["Fixed", "Remaining"], "Count": [len(fixed_df), len(combined)-len(fixed_df)]}).set_index("Status"))
 
 if __name__ == "__main__":
     main()
