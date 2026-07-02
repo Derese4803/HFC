@@ -92,24 +92,35 @@ def main():
                     st.rerun()
 
     # --- ADMIN VIEW ---
+   # --- ADMIN VIEW ---
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
-        # Metrics
+        # 1. DEFINE METRIC VALUES
         total_errors = len(combined)
         total_corrected = len(fixed_df)
         total_consistency = len(df_c)
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
-        
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Total Errors", total_errors)
-        c2.metric("Total Corrected", total_corrected, delta=f"{total_corrected} Fixed")
-        c3.metric("Consistency", total_consistency)
-        c4.metric("Logic", total_logic)
-        c5.metric("Remaining", remaining, delta_color="inverse")
-        
+
+        # 2. CREATE A STYLED CONTAINER BOX
+        with st.container(border=True):
+            st.write("### 📈 Key Performance Indicators")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            
+            # Using metric with color indicators
+            c1.metric("Total Errors", total_errors)
+            c2.metric("Total Corrected", total_corrected)
+            c3.metric("Consistency", total_consistency)
+            c4.metric("Logic", total_logic)
+            c5.metric("Remaining", remaining)
+            
+            # Adding a status bar color visual
+            progress = (total_corrected / total_errors) if total_errors > 0 else 0
+            st.progress(progress, text=f"Overall Completion: {int(progress * 100)}%")
+
         st.markdown("---")
+        # ... (rest of your tab code)
         st.write("### 👥 Performance by Enumerator")
         stats = combined.groupby('username')['number'].count().reset_index()
         stats.columns = ['Enumerator', 'Assigned']
