@@ -69,12 +69,20 @@ def main():
 
         for idx, row in remaining.iterrows():
             error_label = "Consistency Error" if row.get('number') in df_c['number'].values else "Logic Error"
-            with st.expander(f"Error ID: {row.get('number')} | {error_label}"):
+            
+            # Using label as primary title
+            with st.expander(f"{error_label} (ID: {row.get('number')})"):
                 st.markdown("### 👤 Respondent Profile")
+                
+                # Safer display logic to fix ???
+                name_to_show = row.get('respondent_name') or row.get('farmer_name') or "N/A"
+                phone_to_show = row.get('phone_no') or row.get('phone_number') or "N/A"
+                kebele_to_show = row.get('kebele_name') or row.get('kebele') or "N/A"
+                
                 c1, c2 = st.columns(2)
-                c1.write(f"**Name:** {row.get('respondent_name')}")
-                c1.write(f"**Phone:** {row.get('phone_no')}")
-                c2.write(f"**Kebele:** {row.get('kebele_name')}")
+                c1.write(f"**Name:** {name_to_show}")
+                c1.write(f"**Phone:** {phone_to_show}")
+                c2.write(f"**Kebele:** {kebele_to_show}")
                 
                 st.markdown("---")
                 st.markdown("### 🔍 Error Details")
