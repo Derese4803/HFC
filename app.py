@@ -1,4 +1,4 @@
-[7/2/2026 12:15 PM] @ Dere: import streamlit as st
+import streamlit as st
 import pandas as pd
 import requests
 import base64
