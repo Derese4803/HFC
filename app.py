@@ -69,12 +69,8 @@ def main():
 
         for idx, row in remaining.iterrows():
             error_label = "Consistency Error" if row.get('number') in df_c['number'].values else "Logic Error"
-            
-            # Using label as primary title
             with st.expander(f"{error_label} (ID: {row.get('number')})"):
                 st.markdown("### 👤 Respondent Profile")
-                
-                # Safer display logic to fix ???
                 name_to_show = row.get('respondent_name') or row.get('farmer_name') or "N/A"
                 phone_to_show = row.get('phone_no') or row.get('phone_number') or "N/A"
                 kebele_to_show = row.get('kebele_name') or row.get('kebele') or "N/A"
@@ -96,7 +92,7 @@ def main():
                     st.rerun()
 
     # --- ADMIN VIEW ---
- elif st.session_state.logged_in_as == "admin":
+    elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
         # Metrics
@@ -114,8 +110,6 @@ def main():
         c5.metric("Remaining", remaining, delta_color="inverse")
         
         st.markdown("---")
-        st.write("### 👥 Enumerator Workload Progress")
-        
         st.write("### 👥 Performance by Enumerator")
         stats = combined.groupby('username')['number'].count().reset_index()
         stats.columns = ['Enumerator', 'Assigned']
