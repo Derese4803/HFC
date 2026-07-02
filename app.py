@@ -93,34 +93,23 @@ def main():
 
     # --- ADMIN VIEW ---
    # --- ADMIN VIEW ---
-    elif st.session_state.logged_in_as == "admin":
+   elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
-        # 1. DEFINE METRIC VALUES
+        # Calculations
         total_errors = len(combined)
         total_corrected = len(fixed_df)
         total_consistency = len(df_c)
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
-
-        # 2. CREATE A STYLED CONTAINER BOX
-        with st.container(border=True):
-            st.write("### 📈 Key Performance Indicators")
-            c1, c2, c3, c4, c5 = st.columns(5)
-            
-            # Using metric with color indicators
-            c1.metric("Total Errors", total_errors)
-            c2.metric("Total Corrected", total_corrected)
-            c3.metric("Consistency", total_consistency)
-            c4.metric("Logic", total_logic)
-            c5.metric("Remaining", remaining)
-            
-            # Adding a status bar color visual
-            progress = (total_corrected / total_errors) if total_errors > 0 else 0
-            st.progress(progress, text=f"Overall Completion: {int(progress * 100)}%")
-
-        st.markdown("---")
-        # ... (rest of your tab code)
+        
+        # Color-coded Metric Boxes
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1: styled_metric("Total", total_errors, "#6c757d")     # Gray
+        with c2: styled_metric("Corrected", total_corrected, "#28a745") # Green
+        with c3: styled_metric("Consistency", total_consistency, "#007bff") # Blue
+        with c4: styled_metric("Logic", total_logic, "#fd7e14")      # Orange
+        with c5: styled_metric("Remaining", remaining, "#dc3545")    # Red
         st.write("### 👥 Performance by Enumerator")
         stats = combined.groupby('username')['number'].count().reset_index()
         stats.columns = ['Enumerator', 'Assigned']
