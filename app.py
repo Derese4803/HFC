@@ -99,11 +99,12 @@ def main():
     elif st.session_state.logged_in_as == "admin":
         st.subheader("📊 Admin Correction Dashboard")
         
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Errors", len(combined))
         c2.metric("Consistency", len(df_c))
         c3.metric("Logic", len(df_l))
         c4.metric("Remaining", len(combined) - len(fixed_df))
+        c5.metric("Remaining", remaining, delta_color="inverse")
         
         st.write("### 👥 Performance by Enumerator")
         stats = combined.groupby('username')['number'].count().reset_index()
