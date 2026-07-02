@@ -106,15 +106,20 @@ def main():
         total_logic = len(df_l)
         remaining = total_errors - total_corrected
         
-        # 5-Column Metrics
+        # 5-Column Metrics with Color-Coded Deltas
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Errors", total_errors)
-        c2.metric("Total Corrected", total_corrected)
+        # Green for completed work
+        c2.metric("Total Corrected", total_corrected, delta=f"{total_corrected} Fixed", delta_color="normal")
         c3.metric("Consistency", total_consistency)
         c4.metric("Logic", total_logic)
-        c5.metric("Remaining", remaining)
+        # Inverse color (red) for remaining to highlight the need for action
+        c5.metric("Remaining", remaining, delta=f"-{total_corrected}", delta_color="inverse")
         
-        st.write("---")
+        st.markdown("---")
+        
+        # Visualizing the flow with colors
+        st.write("### 👥 Enumerator Workload Progress")
         
         st.write("### 👥 Performance by Enumerator")
         stats = combined.groupby('username')['number'].count().reset_index()
